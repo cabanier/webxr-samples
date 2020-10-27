@@ -24,10 +24,10 @@
         </p>
         <label>Choose the media"s layout:</label>
         <select id="layoutselect">
-          <option value="/media/video/60fps.mp4">
+          <option value="./media/video/60fps.mp4">
             mono
           </option>
-          <option value="/media/video/bbb-sunflower-540p2-1min.webm">
+          <option value="./media/video/bbb-sunflower-540p2-1min.webm">
             stereo-top-bottom
           </option>
         </select>
@@ -176,8 +176,8 @@
             cube = createCube(0xffffff, { x: 168.6, y: -457.5, opacity: 0.75 });
             scene.add(cube);
 
-            playSprite = createSprite("/media/textures/play-button.png", { x: 168.6, y: -457.5 });
-            pauseSprite = createSprite("/media/textures/pause-button.png", { x: 168.6, y: -457.5 });
+            playSprite = createSprite("./media/textures/play-button.png", { x: 168.6, y: -457.5 });
+            pauseSprite = createSprite("./media/textures/pause-button.png", { x: 168.6, y: -457.5 });
             scene.add(pauseSprite);
             scene.add(playSprite);
 
