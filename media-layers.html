@@ -38,8 +38,18 @@
       <p>Click "Enter VR" to see content</p>
     </main>
     <script type="module">
+      import { XRControllerModelFactory } from "https://unpkg.com/three/examples/jsm/webxr/XRControllerModelFactory.js";
+      import { XRHandModelFactory } from "https://unpkg.com/three/examples/jsm/webxr/XRHandModelFactory.js";
+      import { OrbitControls } from "https://unpkg.com/three/examples/jsm/controls/OrbitControls.js";
       import { WebXRButton } from "./js/util/webxr-button.js";
       import { QueryArgs } from "./js/util/query-args.js";
+
+      // This library matches XRInputSource profiles to available controller models for us.
+      import { fetchProfile } from "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/motion-controllers@1.0/dist/motion-controllers.module.js";
+      import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.121.1/examples/jsm/loaders/GLTFLoader.js";
+
+      // The path of the CDN the sample will fetch controller models from.
+      const DEFAULT_PROFILES_PATH = "https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles";
 
       // If requested, use the polyfill to provide support for mobile devices
       // and devices which only support WebVR.
@@ -56,9 +66,8 @@
       let session = null;
 
       let layoutSelect = null;
-      let videoPlayer = null;
-
-      let lastHandedness = null;
+      let threeXrProjector = null;
+      let mediaPlayer = null;
 
       function initXR() {
         xrButton = new WebXRButton({ onRequestSession, onEndSession });
@@ -83,8 +92,13 @@
       async function initializeSession(session) {
         layoutSelect = document.getElementById("layoutselect");
         const { text, value } = layoutSelect.options[layoutSelect.selectedIndex];
-        videoPlayer = new VideoPlayer(text, value);
-        await videoPlayer.initializeXRBindings(session);
+        
+        mediaPlayer = new MediaPlayer(text, value);
+        threeXrProjector = new ThreeXRProjector();
+        threeXrProjector.useProfileControllerMeshes(session);
+        
+        await threeXrProjector.initializeXRBindings(session);
+        await mediaPlayer.initializeXRBindings(session);
         startSession(session);
       }
 
@@ -92,24 +106,25 @@
         session.requestReferenceSpace("local-floor")
           .then(async (referenceSpace) => {
             refSpace = referenceSpace;
-            const [quadMediaLayer, quadWebGlLayer] = await videoPlayer.createQuadMediaLayer(refSpace);
-            const [equirectMediaLayer] = await videoPlayer.createEquirectMediaLayer(refSpace);
+            const [equirectMediaLayer] = await mediaPlayer.createEquirectLayer(refSpace);
+            const [quadMediaLayer, quadWebGlLayer] = await mediaPlayer.createQuadLayer(refSpace);
+            const [threeProjectionLayer] = await threeXrProjector.createProjectionLayer();
 
             session.addEventListener("squeeze", evt => {
-              if (videoPlayer.isPlaying) videoPlayer.video.pause();
-              else videoPlayer.video.play();
+              if (mediaPlayer.isPlaying) mediaPlayer.video.pause();
+              else mediaPlayer.video.play();
             });
 
             session.addEventListener("select", evt => {
-              if (videoPlayer.isPlaying) videoPlayer.video.pause();
-              else videoPlayer.video.play();
+              if (mediaPlayer.isPlaying) mediaPlayer.video.pause();
+              else mediaPlayer.video.play();
             });
 
-            const layers = [equirectMediaLayer, quadMediaLayer, quadWebGlLayer];
+            const layers = [equirectMediaLayer, quadMediaLayer, quadWebGlLayer, threeProjectionLayer];
             session.updateRenderState({ layers });
             
-            videoPlayer.video.play();
-            session.requestAnimationFrame(onAnimationFrame);            
+            session.requestAnimationFrame(onAnimationFrame);
+            mediaPlayer.video.play();
           });
       }
 
@@ -117,7 +132,8 @@
         const pose = frame.getViewerPose(refSpace);
         if (!pose) return;
 
-        videoPlayer.render(frame);
+        mediaPlayer.render(frame);
+        threeXrProjector.render(frame, pose);
         frame.session.requestAnimationFrame(onAnimationFrame);
       }
 
@@ -126,7 +142,145 @@
         renderer = null;
       }
 
-      class VideoPlayer {
+      class ThreeXRProjector {
+        constructor() {
+          this._renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true
+          });
+
+          this._xrWebGlBinding = null;
+          this._projectionWebGlLayer = null;
+          this._controllerMeshes = {};
+
+          const gl = this._renderer.getContext();
+          this._renderer.setPixelRatio(window.devicePixelRatio);
+          this._renderer.setSize(window.innerWidth, window.innerHeight, false);
+          this._renderer.outputEncoding = THREE.sRGBEncoding;
+          this._renderer.shadowMap.enabled = true;
+          this._renderer.xr.enabled = true;
+          this._renderer.autoClear = false;
+
+          this._scene = new THREE.Scene();
+          this._scene.matrixAutoUpdate = false;
+
+          this._framebuffer = gl.createFramebuffer();
+          this._camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
+          this._camera.matrixAutoUpdate = false;
+          this._camera.position.set(0, 1.6, 3);
+
+          this._controlsContainer = document.createElement("div");
+          this._controls = new OrbitControls(this._camera, this._controlsContainer);
+          this._controls.target.set(0, 1.6, 0);
+          this._controls.update();
+
+          const lights = this._createLights();
+          lights.map(light => this._scene.add(light));
+          this._scene.add(this._camera);
+        }
+
+        _createLights() {
+          const hemisphereLight = new THREE.HemisphereLight(0x808080, 0x606060);
+          const directionalLight = new THREE.DirectionalLight(0xffffff);
+          directionalLight.position.set(0, 6, 0);
+          directionalLight.castShadow = true;
+          directionalLight.shadow.camera.top = 2;
+          directionalLight.shadow.camera.bottom = - 2;
+          directionalLight.shadow.camera.right = 2;
+          directionalLight.shadow.camera.left = - 2;
+          directionalLight.shadow.mapSize.set(4096, 4096);
+          
+          return [hemisphereLight, directionalLight];
+        }
+
+        async initializeXRBindings(session) {
+          const gl = this._renderer.getContext();
+          await gl.makeXRCompatible();
+
+          this._xrMediaBinding = new XRMediaBinding(session);
+          this._xrWebGlBinding = new XRWebGLBinding(session, gl);
+          this._controlsContainer.appendChild(this._renderer.domElement);
+          document.body.appendChild(this._controlsContainer);
+        }
+
+        async createProjectionLayer() {
+          this._projectionWebGlLayer = this._xrWebGlBinding.createProjectionLayer({});
+          return [this._projectionWebGlLayer];
+        }
+
+        useProfileControllerMeshes(session) {
+          const controllers = this._controllerMeshes;
+          const scene = this._scene;
+
+          session.addEventListener("inputsourceschange", event => {
+            for (let inputSource of event.added) {
+              if (inputSource.targetRayMode === "tracked-pointer") {
+                fetchProfile(inputSource, DEFAULT_PROFILES_PATH).then(({ profile, assetPath }) => {
+                  new GLTFLoader().load(assetPath,
+                    function (gltf) {
+                      controllers[`${inputSource.targetRayMode}-${inputSource.handedness}`] = gltf.scene;
+                      const lineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, -2.5, 0)]);
+                      const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                      const line = new THREE.Line(lineGeometry, lineMaterial);
+
+                      gltf.scene.add(line);
+                      gltf.scene.visible = true;
+                      gltf.scene.matrixAutoUpdate = false;
+                      scene.add(gltf.scene);
+                    },
+                    function (xhr) {
+                      console.log((xhr.loaded / xhr.total * 100) + "% loaded");
+                    },
+                    function (err) {
+                      console.log("An error happened", err);
+                    });
+                });
+              }
+            }
+          });
+        }
+
+        render(frame, pose) {
+          if (!pose) return;
+          this._renderer.clear();
+          const gl = this._renderer.getContext();
+
+          for (let inputSource of frame.session.inputSources) {
+            const inputPose = frame.getPose(inputSource.gripSpace, refSpace);
+            const { targetRayMode, handedness } = inputSource;
+
+            const controller = this._controllerMeshes[`${targetRayMode}-${handedness}`];
+            if (!inputPose || !controller) continue;
+
+            const grip = new THREE.Matrix4();
+            grip.fromArray(inputPose.transform.matrix);
+            controller.matrix.copy(grip);
+          }
+
+          for (let view of pose.views) {
+            const viewSubImage = this._xrWebGlBinding.getViewSubImage(this._projectionWebGlLayer, view);
+            const viewport = viewSubImage.viewport;
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this._framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, viewSubImage.colorTexture, 0);
+            if (viewSubImage.depthStencilTexture !== undefined) {
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, viewSubImage.depthStencilTexture, 0);
+            }
+
+            this._camera.matrix.fromArray(view.transform.matrix);
+            this._camera.projectionMatrix.fromArray(view.projectionMatrix);
+            this._scene.updateMatrixWorld(true);
+
+            this._renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+            this._renderer.setFramebuffer(this._framebuffer);
+
+            this._renderer.render(this._scene, this._camera);
+            this._renderer.clearDepth();
+          }
+        }
+      }
+
+      class MediaPlayer {
         constructor(layerType, videoSrc) {
           this._renderer = new THREE.WebGLRenderer({
             antialias: true,
@@ -154,9 +308,9 @@
           this._camera.position.z = 1;
 
           const gl = this._renderer.getContext();
-          const spriteBackground = VideoPlayer.createCube(0xffffff, { x: 168.6, y: -457.5, opacity: 0.75 });
-          this._playSprite = VideoPlayer.createSprite("./media/textures/play-button.png", { x: 168.6, y: -457.5 });
-          this._pauseSprite = VideoPlayer.createSprite("./media/textures/pause-button.png", { x: 168.6, y: -457.5 });
+          const spriteBackground = MediaPlayer.createCube(0xffffff, { x: 168.6, y: -457.5, opacity: 0.75 });
+          this._playSprite = MediaPlayer.createSprite("./media/textures/play-button.png", { x: 168.6, y: -457.5 });
+          this._pauseSprite = MediaPlayer.createSprite("./media/textures/pause-button.png", { x: 168.6, y: -457.5 });
 
           this._scene.add(spriteBackground);
           this._scene.add(this._pauseSprite);
@@ -214,7 +368,7 @@
           this._xrWebGlBinding = new XRWebGLBinding(session, gl);
         }
 
-        async createQuadMediaLayer(refSpace, { hideToolbar } = {}) {
+        async createQuadLayer(refSpace, { hideToolbar } = {}) {
           this._quadMediaLayer = this._xrMediaBinding.createQuadLayer(this._video, {
             space: refSpace.getOffsetReferenceSpace(new XRRigidTransform({ x: 0.0, y: 0.0, z: 0.0, w: 1.0 })),
             transform: new XRRigidTransform({ x: 0.0, y: 1.3, z: -RANGE, w: 1.0 }),
@@ -236,7 +390,7 @@
           return [this._quadMediaLayer, this._quadWebGlLayer];
         }
 
-        async createEquirectMediaLayer(refSpace) {
+        async createEquirectLayer(refSpace) {
           this._equirectMediaLayer = this._xrMediaBinding.createEquirectLayer(this._video, { space: refSpace });
           return [this._equirectMediaLayer];
         }
