@@ -59,9 +59,6 @@
       }
 
       let xrButton = null;
-      const RANGE = 2.75;
-      const SPRITE_SCALE = 550;
-
       let refSpace = null;
       let session = null;
 
@@ -109,20 +106,18 @@
             const [equirectMediaLayer] = await mediaPlayer.createEquirectLayer(refSpace);
             const [quadMediaLayer, quadWebGlLayer] = await mediaPlayer.createQuadLayer(refSpace);
             const [threeProjectionLayer] = await threeXrProjector.createProjectionLayer();
-
-            session.addEventListener("squeeze", evt => {
-              if (mediaPlayer.isPlaying) mediaPlayer.video.pause();
-              else mediaPlayer.video.play();
-            });
-
-            session.addEventListener("select", evt => {
-              if (mediaPlayer.isPlaying) mediaPlayer.video.pause();
-              else mediaPlayer.video.play();
-            });
+            threeXrProjector.makeRigidTransformLayerPressable(quadWebGlLayer);
 
             const layers = [equirectMediaLayer, quadMediaLayer, quadWebGlLayer, threeProjectionLayer];
+            const handleControllerPress = (evt) => {
+              if (!mediaPlayer.showingProgressBar) mediaPlayer.showProgressBar();
+              mediaPlayer._onPress(evt);
+            };
+
+            session.addEventListener("squeeze", handleControllerPress);
+            session.addEventListener("select", handleControllerPress);
+
             session.updateRenderState({ layers });
-            
             session.requestAnimationFrame(onAnimationFrame);
             mediaPlayer.video.play();
           });
@@ -208,6 +203,18 @@
           return [this._projectionWebGlLayer];
         }
 
+        makeRigidTransformLayerPressable(layer) {
+          const geometry = new THREE.PlaneGeometry(layer.width * 2, layer.height * 2);
+          const material = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide, opacity: 0 });
+          const mirror = new THREE.Mesh(geometry, material);
+
+          mirror.name = "mirror";
+          mirror.position.x = layer.transform.position.x;
+          mirror.position.y = layer.transform.position.y;
+          mirror.position.z = layer.transform.position.z * 23/22;
+          this._scene.add(mirror);
+        }
+
         useProfileControllerMeshes(session) {
           const controllers = this._controllerMeshes;
           const scene = this._scene;
@@ -219,14 +226,29 @@
                   new GLTFLoader().load(assetPath,
                     function (gltf) {
                       controllers[`${inputSource.targetRayMode}-${inputSource.handedness}`] = gltf.scene;
-                      const lineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, -2.5, 0)]);
+
+                      const controller = gltf.scene.children[0];
+                      const controllerCenter = new THREE.Box3().setFromObject(controller).getCenter(controller.position);
+                      const lineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, -1.25, 0)]);
                       const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
                       const line = new THREE.Line(lineGeometry, lineMaterial);
+                      line.position.copy(controllerCenter);
 
-                      gltf.scene.add(line);
+                      const cursorGeometry = new THREE.CircleGeometry(0.05, 30);
+                      const cursorMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 1, side: THREE.DoubleSide });
+                      const cursor = new THREE.Mesh(cursorGeometry, cursorMaterial);
+                      cursor.scale.x = 0.25;
+                      cursor.scale.y = 0.25;
+                      cursor.scale.z = 0.25;
+
                       gltf.scene.visible = true;
                       gltf.scene.matrixAutoUpdate = false;
+                      gltf.scene._cursor = cursor;
+                      gltf.scene._line = line;
+                      gltf.scene.add(line);
+
                       scene.add(gltf.scene);
+                      scene.add(cursor);
                     },
                     function (xhr) {
                       console.log((xhr.loaded / xhr.total * 100) + "% loaded");
@@ -255,6 +277,39 @@
             const grip = new THREE.Matrix4();
             grip.fromArray(inputPose.transform.matrix);
             controller.matrix.copy(grip);
+
+            const laserLength = -2.5;
+            const rayMatrix = new THREE.Matrix4();
+            const rayMatrixWorld = new THREE.Matrix4();
+            rayMatrix.fromArray(inputPose.transform.matrix);
+
+            const raycaster = new THREE.Raycaster();
+            const raycasterOrigin = new THREE.Vector3();
+            const raycasterDestination = new THREE.Vector3(0, laserLength, 0);
+
+            rayMatrixWorld.multiplyMatrices(this._scene.matrixWorld, rayMatrix);
+            raycasterOrigin.setFromMatrixPosition(rayMatrixWorld);
+            raycaster.set(raycasterOrigin, raycasterDestination.transformDirection(rayMatrixWorld).normalize());
+
+            let intersects = raycaster.intersectObjects(this._scene.children, true);
+            let foundIntersection = false;
+
+            for (let intersect of intersects) {
+              if (intersect && intersect.object && !intersect.object.name.includes("mirror")) {
+                mediaPlayer._onRaycasterDidIntersect(null, null);
+                continue;
+              };
+
+              foundIntersection = true;
+              const shouldShowCursor = mediaPlayer._onRaycasterDidIntersect(intersect.point.x, intersect.point.y);
+
+              controller._cursor.visible = shouldShowCursor;
+              controller._cursor.position.copy(intersect.point);
+              controller._cursor.position.z += 0.1;
+              break;
+            }
+
+            if (!foundIntersection) controller._cursor.visible = false;
           }
 
           for (let view of pose.views) {
@@ -280,6 +335,50 @@
         }
       }
 
+      class Button {
+        constructor(x, y, spriteUrl, scene, { spriteScale, backgroundScale, invertColor, backgroundColor, backgroundOpacity }) {
+          const spriteMaterial = new THREE.SpriteMaterial({ map: new THREE.TextureLoader().load(spriteUrl) });
+          this._sprite = new THREE.Sprite(spriteMaterial);
+
+          if (spriteScale) {
+            this._sprite.scale.x = spriteScale;
+            this._sprite.scale.y = spriteScale;
+          }
+
+          this._sprite.position.x = x;
+          this._sprite.position.y = y;
+          this._sprite._resource = spriteUrl;
+
+          this._invertMaterial = new THREE.MeshBasicMaterial({ color: invertColor || 0x000000, opacity: backgroundOpacity || 1.0 });
+          this._backgroundMaterial = new THREE.MeshBasicMaterial({ color: backgroundColor || 0x000000, opacity: backgroundOpacity || 1.0 });
+          this._background = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 1.0), this._backgroundMaterial);
+          this._onPress = undefined;
+
+          if (backgroundScale) {
+            this._background.scale.x = backgroundScale;
+            this._background.scale.y = backgroundScale;
+          }
+
+          this._background.position.x = x;
+          this._background.position.y = y;
+
+          scene.add(this._background);
+          scene.add(this._sprite);
+        }
+
+        get visible() { return this._background.visible; }
+        get position() { return this._background.position; }
+        get scale() { return this._background.scale; }
+
+        set visible(isVisible) {
+          this._background.visible = isVisible;
+          this._sprite.visible = isVisible;
+        }
+
+        showInverse() { this._background.material = this._invertMaterial; }
+        hideInverse() { this._background.material = this._backgroundMaterial; }
+      }
+
       class MediaPlayer {
         constructor(layerType, videoSrc) {
           this._renderer = new THREE.WebGLRenderer({
@@ -292,6 +391,7 @@
 
           this._xrMediaBinding = null;
           this._xrWebGlBinding = null;
+
           this._quadWebGlLayer = null;
           this._quadMediaLayer = null;
           this._equirectMediaLayer = null;
@@ -299,24 +399,45 @@
           this._layoutType = layerType;
           this._videoSrc = videoSrc;
           this._video = null;
-          this._timeoutId = null;
-          this._isPlaying = false;
-          this._showingProgressBar = false;
 
-          this._scene = new THREE.Scene();
-          this._camera = new THREE.OrthographicCamera(0, innerWidth * 2, 0, innerHeight * -2);
+          this._lastX = null;
+          this._lastY = null;
+          this._timeoutId = null;
+
+          this._showingProgressBar = false;
+          this._isPlaying = false;
+          this._isMuted = false;
+
+          this._camera = new THREE.OrthographicCamera(0, 1280, 0, -105);
           this._camera.position.z = 1;
 
-          const gl = this._renderer.getContext();
-          const spriteBackground = MediaPlayer.createCube(0xffffff, { x: 168.6, y: -457.5, opacity: 0.75 });
-          this._playSprite = MediaPlayer.createSprite("./media/textures/play-button.png", { x: 168.6, y: -457.5 });
-          this._pauseSprite = MediaPlayer.createSprite("./media/textures/pause-button.png", { x: 168.6, y: -457.5 });
-
-          this._scene.add(spriteBackground);
-          this._scene.add(this._pauseSprite);
-          this._scene.add(this._playSprite);
+          this._scene = new THREE.Scene();
           this._scene.add(this._camera);
 
+          const buttonOptions = {
+            invertColor: 0x4fb5ff,
+            backgroundColor: 0xffffff,
+            backgroundOpacity: 0.75,
+            backgroundScale: 75,
+            spriteScale: 65
+          };
+
+          this._backwardButton = new Button(1280 / 10, -105 / 2, "./media/textures/backward-button.png", this._scene, buttonOptions);
+
+          this._playButton = new Button(1280 / 10 * 2, -105 / 2, "./media/textures/play-solid.png", this._scene, buttonOptions);
+          this._pauseButton = new Button(1280 / 10 * 2, -105 / 2, "./media/textures/pause-solid.png", this._scene, buttonOptions);
+
+          this._forwardButton = new Button(1280 / 10 * 3, -105 / 2, "./media/textures/forward-button.png", this._scene, buttonOptions);
+
+          this._muteButton = new Button(1280 / 10 * 7, -105 / 2, "./media/textures/volume-mute-button.png", this._scene, buttonOptions);
+          this._unmuteButton = new Button(1280 / 10 * 7, -105 / 2, "./media/textures/volume-off-button.png", this._scene, buttonOptions);
+
+          this._volumeDownButton = new Button(1280 / 10 * 8, -105 / 2, "./media/textures/volume-down-button.png", this._scene, buttonOptions);
+          this._volumeUpButton = new Button(1280 / 10 * 9, -105 / 2, "./media/textures/volume-up-button.png", this._scene, buttonOptions);
+
+          this._buttons = [this._backwardButton, this._playButton, this._pauseButton, this._forwardButton, this._muteButton, this._unmuteButton, this._volumeUpButton, this._volumeDownButton];
+
+          const gl = this._renderer.getContext();
           this._framebuffer = gl.createFramebuffer();
           this._readFramebuffer = gl.createFramebuffer();
         }
@@ -324,16 +445,6 @@
         get video() { return this._video; }
         get showingProgressBar() { return this._showingProgressBar; }
         get isPlaying() { return this._isPlaying; }
-
-        _determinePlayPauseVisibility() {
-          this._playSprite.visible = false;
-          this._pauseSprite.visible = false;
-
-          if (this._showingProgressBar) {
-            if (this._isPlaying) this._pauseSprite.visible = true;
-            else this._playSprite.visible = true;
-          }
-        }
 
         _initializeVideoElement() {
           const video = document.createElement("video");
@@ -358,20 +469,88 @@
           });
         }
 
+        _timeoutProgressBar() {
+          if (this._timeoutId) clearTimeout(this._timeoutId);
+          this._timeoutId = setTimeout(this.hideProgressBar.bind(this), 4000);
+        }
+
+        _determineToggleButtonVisibility() {
+          this._playButton.visible = false;
+          this._pauseButton.visible = false;
+          this._unmuteButton.visible = false;
+          this._muteButton.visible = false;
+
+          if (this._showingProgressBar) {
+            if (this._isPlaying) this._pauseButton.visible = true;
+            else this._playButton.visible = true;
+
+            if (this._isMuted) this._unmuteButton.visible = true;
+            else this._muteButton.visible = true;
+          }
+        }
+
+        _getButtonsInBound(x, y) {
+          return this._buttons.filter(button => {
+            const isInBoundsX = x >= button.position.x - button.scale.x / 2 && x <= button.position.x + button.scale.x / 2;
+            const isInBoundsY = y >= button.position.y - button.scale.y / 2 && y <= button.position.y + button.scale.y / 2;
+            return button.visible && isInBoundsX && isInBoundsY;
+          });
+        }
+
+        _onPress(evt) {
+          this._getButtonsInBound(this._lastX, this._lastY).forEach(button => button._onPress());
+        }
+
+        _onRaycasterDidIntersect(worldX, worldY) {          
+          this._lastX = worldX ? (worldX + 1) / (1 * 2 / 1280) + 4 : -9999;
+          this._lastY = worldY ? (worldY - 0.08203125) / (0.08203125 * 2 / 105) - 518 : -9999;
+
+          for (let button of this._buttons) { button.hideInverse(); }
+          if (!worldX || !worldY || !this.showingProgressBar) return false;
+
+          this._getButtonsInBound(this._lastX, this._lastY).forEach(button => button.showInverse());
+          this._timeoutProgressBar();
+          return true;
+        }
+
         async initializeXRBindings(session) {
           const gl = this._renderer.getContext();
-          this._video = await this._initializeVideoElement();
           document.body.appendChild(gl.canvas);
-          await gl.makeXRCompatible();
 
+          await gl.makeXRCompatible();
           this._xrMediaBinding = new XRMediaBinding(session);
           this._xrWebGlBinding = new XRWebGLBinding(session, gl);
+          this._video = await this._initializeVideoElement();
+
+          this._backwardButton._onPress = () => this._video.currentTime = String(Math.max(0, this._video.currentTime - 10));
+          this._forwardButton._onPress = () => this._video.currentTime = String(Math.min(this._video.duration, this._video.currentTime + 10));
+          this._volumeUpButton._onPress = () => this._video.volume = Math.min(1, this._video.volume + 0.1);
+          this._volumeDownButton._onPress = () => this._video.volume = Math.max(0, this._video.volume - 0.1);
+
+          this._pauseButton._onPress = () => {
+            if (this._isPlaying) this._video.pause();
+          }
+          this._playButton._onPress = () => {
+            if (!this._isPlaying) this._video.play();
+          }
+          this._muteButton._onPress = () => {
+            if (!this._isMuted) {
+              this._video.muted = true;
+              this._isMuted = true;
+            }
+          }
+          this._unmuteButton._onPress = () => {
+            if (this._isMuted) {
+              this._video.muted = false;
+              this._isMuted = false;
+            }
+          }          
         }
 
         async createQuadLayer(refSpace, { hideToolbar } = {}) {
           this._quadMediaLayer = this._xrMediaBinding.createQuadLayer(this._video, {
             space: refSpace.getOffsetReferenceSpace(new XRRigidTransform({ x: 0.0, y: 0.0, z: 0.0, w: 1.0 })),
-            transform: new XRRigidTransform({ x: 0.0, y: 1.3, z: -RANGE, w: 1.0 }),
+            transform: new XRRigidTransform({ x: 0.0, y: 1.3, z: -2.75, w: 1.0 }),
             layout: this._layoutType,
           });
 
@@ -379,7 +558,7 @@
             this._quadWebGlLayer = this._xrWebGlBinding.createQuadLayer({
               layout: "mono",
               space: refSpace.getOffsetReferenceSpace(new XRRigidTransform({ x: 0.0, y: 0.0, z: 0.0, w: 1.0 })),
-              transform: new XRRigidTransform({ x: 0.0, y: 0.8175, z: -RANGE, w: 1.0 }),
+              transform: new XRRigidTransform({ x: 0.0, y: 0.8175, z: -2.75, w: 1.0 }),
               viewPixelHeight: 105,
               viewPixelWidth: 1280,
               height: 105 / 1280,
@@ -409,15 +588,14 @@
           for (let child of this._scene.children) { 
             child.visible = true;
           }
-          
-          if (this._timeoutId) clearTimeout(this._timeoutId);
-          this._timeoutId = setTimeout(this.hideProgressBar.bind(this), 4000);
+
+          this._timeoutProgressBar();
         }
 
         render(frame) {
           const gl = this._renderer.getContext();
           const glSubImage = this._xrWebGlBinding.getSubImage(this._quadWebGlLayer, frame);
-          this._determinePlayPauseVisibility();
+          this._determineToggleButtonVisibility();
 
           gl.bindFramebuffer(gl.FRAMEBUFFER, this._framebuffer);
           gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, glSubImage.colorTexture, 0);
@@ -425,37 +603,6 @@
 
           this._renderer.render(this._scene, this._camera);
         }
-
-        static createCube(color, { x, y, z, opacity }) {
-          const geometry = new THREE.BoxGeometry(1, 1, 1);
-          const material = new THREE.MeshBasicMaterial({ color, opacity });
-          const cube = new THREE.Mesh(geometry, material);
-
-          cube.scale.x = 650 / 7;
-          cube.scale.y = 650;
-
-          cube.position.x = x || 0;
-          cube.position.y = y || 0;
-          cube.position.z = z || 0;
-
-          return cube;
-        }
-
-        static createSprite(resourceUrl, { x, y, z }) {
-          const spriteMap = new THREE.TextureLoader().load(resourceUrl);
-          const spriteMaterial = new THREE.SpriteMaterial({ map: spriteMap });
-          const sprite = new THREE.Sprite(spriteMaterial);
-
-          sprite.scale.x = SPRITE_SCALE / 7;
-          sprite.scale.y = SPRITE_SCALE;
-          sprite.scale.z = SPRITE_SCALE;
-
-          sprite.position.x = x || 0;
-          sprite.position.y = y || 0;
-          sprite.position.z = z || 0;
-
-          return sprite;
-        } 
       }
 
       // Start the XR application.
