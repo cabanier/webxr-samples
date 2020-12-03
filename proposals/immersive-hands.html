@@ -67,8 +67,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     let boxes_right = [];
     let boxes = { left: boxes_left, right: boxes_right };
     let isAR = false;
-    let radii = new Float32Array(XRHand.LITTLE_PHALANX_TIP+1);
-    let positions = new Float32Array(16*(XRHand.LITTLE_PHALANX_TIP+1));
+    let radii = null;
+    let positions = null;
 
     // WebGL scene globals.
     let gl = null;
@@ -107,7 +107,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       boxes_right = [];
       boxes = { left: boxes_left, right: boxes_right };
       if (typeof XRHand !== 'undefined') {
-        for (let i = 0; i <= XRHand.LITTLE_PHALANX_TIP; i++) {
+        for (let i = 0; i <= 24; i++) {
           const r = .6 + Math.random() * .4;
           const g = .6 + Math.random() * .4;
           const b = .6 + Math.random() * .4;
@@ -238,8 +238,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           if (typeof frame.fillJointRadii !== 'function' || typeof frame.fillPoses !== 'function') {
             for (const box of boxes[inputSource.handedness]) {
               let jointPose = null;
-              if (inputSource.hand[box.offset] !== null) {
-                jointPose = frame.getJointPose(inputSource.hand[box.offset], refSpace);
+              if (spaces[box.offset] !== null) {
+                jointPose = frame.getJointPose(spaces[box.offset], refSpace);
               }
 
               if (jointPose !== null) {
@@ -261,11 +261,16 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               console.log("no pose");
             }
 
-            if (!frame.fillJointRadii(inputSource.hand, radii)) {
-              console.log("no fillJointRadii");
-              continue;
+            if (radii === null) {
+              radii = new Float32Array(inputSource.hand.size);
+              positions = new Float32Array(16*inputSource.hand.size);
+              if (!frame.fillJointRadii(inputSource.hand.values(), radii)) {
+                console.log("no fillJointRadii");
+                continue;
+              }
             }
-            if (!frame.fillPoses(inputSource.hand, refSpace, positions)) {
+
+            if (!frame.fillPoses(inputSource.hand.values(), refSpace, positions)) {
               console.log("no fillPoses");
               continue;
             }
