@@ -188,6 +188,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       // Set the scene's renderer, which creates the necessary GPU resources.
       scene.setRenderer(renderer);
 
+      // Loads a generic controller meshes.
+      scene.inputRenderer.setControllerMesh(new Gltf2Node({url: '../media/gltf/controller/controller.gltf'}), 'right');
+      scene.inputRenderer.setControllerMesh(new Gltf2Node({url: '../media/gltf/controller/controller-left.gltf'}), 'left');
+
       // Use the new WebGL context to create a XRWebGLLayer and set it as the
       // sessions baseLayer. This allows any content rendered to the layer to
       // be displayed on the XRDevice.
@@ -228,8 +232,25 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
       for (let inputSource of session.inputSources) {
         let offset = 0;
+          if (inputSource.targetRayMode == 'tracked-pointer') {
+            // If we have a pointer matrix and the pointer origin is the users
+            // hand (as opposed to their head or the screen) use it to render
+            // a ray coming out of the input device to indicate the pointer
+            // direction.
+            let targetRayPose = frame.getPose(inputSource.targetRaySpace, refSpace);
+            if (targetRayPose) {
+              scene.inputRenderer.addLaserPointer(targetRayPose.transform);
+            }
+          }
         if (!inputSource.hand) {
-          continue;
+          if (inputSource.gripSpace) {
+            let gripPose = frame.getPose(inputSource.gripSpace, refSpace);
+            if (gripPose) {
+              // If we have a grip pose use it to render a mesh showing the
+              // position of the controller.
+              scene.inputRenderer.addController(gripPose.transform.matrix, inputSource.handedness);
+            }
+          }
         } else {
           for (const box of boxes[inputSource.handedness]) {
             scene.removeNode(box.node);
