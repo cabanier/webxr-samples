@@ -65,6 +65,7 @@
       let layoutSelect = null;
       let threeXrProjector = null;
       let mediaPlayer = null;
+      let toolbar = null;
 
       function initXR() {
         xrButton = new WebXRButton({ onRequestSession, onEndSession });
@@ -90,12 +91,14 @@
         layoutSelect = document.getElementById("layoutselect");
         const { text, value } = layoutSelect.options[layoutSelect.selectedIndex];
         
+        toolbar = new Toolbar();
         mediaPlayer = new MediaPlayer(text, value);
         threeXrProjector = new ThreeXRProjector();
         threeXrProjector.useProfileControllerMeshes(session);
         
-        await threeXrProjector.initializeXRBindings(session);
-        await mediaPlayer.initializeXRBindings(session);
+        await threeXrProjector.initialize(session);
+        await mediaPlayer.initialize(session);
+        toolbar.initialize(session);
         startSession(session);
       }
 
@@ -103,19 +106,24 @@
         session.requestReferenceSpace("local-floor")
           .then(async (referenceSpace) => {
             refSpace = referenceSpace;
-            const [equirectMediaLayer] = await mediaPlayer.createEquirectLayer(refSpace);
-            const [quadMediaLayer, quadWebGlLayer] = await mediaPlayer.createQuadLayer(refSpace);
-            const [threeProjectionLayer] = await threeXrProjector.createProjectionLayer();
-            threeXrProjector.makeRigidTransformLayerPressable(quadWebGlLayer);
+            await mediaPlayer.createQuadLayer(refSpace);
+            await mediaPlayer.createEquirectLayer(refSpace);
+            await threeXrProjector.createProjectionLayer();
+            await toolbar.createQuadLayer(refSpace);
 
-            const layers = [equirectMediaLayer, quadMediaLayer, quadWebGlLayer, threeProjectionLayer];
-            const handleControllerPress = (evt) => {
-              if (!mediaPlayer.showingProgressBar) mediaPlayer.showProgressBar();
-              mediaPlayer._onPress(evt);
-            };
+            const layers = [
+              mediaPlayer.equirectLayer,
+              mediaPlayer.quadLayer,
+              threeXrProjector.projectionLayer,
+              toolbar.quadLayer,
+            ];
 
-            session.addEventListener("squeeze", handleControllerPress);
-            session.addEventListener("select", handleControllerPress);
+            for (let layer of layers) {
+              if (layer._mirror) {
+                if (layer._mirror._pinToCamera) threeXrProjector.addPinnedMirrorLayer(layer._mirror);
+                else threeXrProjector.addMirrorLayer(layer._mirror);
+              }
+            }
 
             session.updateRenderState({ layers });
             session.requestAnimationFrame(onAnimationFrame);
@@ -127,7 +135,7 @@
         const pose = frame.getViewerPose(refSpace);
         if (!pose) return;
 
-        mediaPlayer.render(frame);
+        toolbar.render(frame, pose);
         threeXrProjector.render(frame, pose);
         frame.session.requestAnimationFrame(onAnimationFrame);
       }
@@ -137,28 +145,247 @@
         renderer = null;
       }
 
-      class ThreeXRProjector {
+      class BaseXRLayer {
         constructor() {
-          this._renderer = new THREE.WebGLRenderer({
+          this.__BINDING_TYPE = null;
+          this.__LAYER_TYPES = null;
+
+          this.__xrWebGlBinding = null;
+          this.__xrMediaBinding = null;
+          this.__renderer = null;
+
+          this.__quadMediaLayer = null;
+          this.__quadWebGlLayer = null;
+          this.__equirectMediaLayer = null;
+          this.__equirectWebGlLayer = null;
+          this.__projectionWebGlLayer = null;
+        }
+
+        static get MEDIA_BINDING() { return "MEDIA_BINDING"; }
+        static get WEB_GL_BINDING() { return "WEB_GL_BINDING"; }
+
+        static get QUAD_LAYER() { return "QUAD_LAYER"; }
+        static get EQUIRECT_LAYER() { return "EQUIRECT_LAYER"; }
+        static get PROJECTION_LAYER() { return "PROJECTION_LAYER"; }
+
+        _makeSafe(object, error) {
+          if (!object) {
+            console.error(error);
+            return null;
+          }
+
+          return object;
+        }
+
+        get _BINDING_TYPE() {
+          this._makeSafe(this.__BINDING_TYPE, "");
+          if (this.__BINDING_TYPE !== BaseXRLayer.MEDIA_BINDING && this.__BINDING_TYPE !== BaseXRLayer.WEB_GL_BINDING) {
+            console.error("");
+            return null;
+          }
+
+          return this.__BINDING_TYPE;
+        }
+
+        set _BINDING_TYPE(bindingType) {
+          if (bindingType !== BaseXRLayer.MEDIA_BINDING && bindingType !== BaseXRLayer.WEB_GL_BINDING) {
+            console.error("");
+            return null;
+          }
+
+          this.__BINDING_TYPE = bindingType;
+        }
+
+        get _LAYER_TYPES() { return this._makeSafe(this.__LAYER_TYPES, ""); }
+        set _LAYER_TYPES(layerTypes) {
+          for (let layerType of layerTypes) {
+            if (![BaseXRLayer.QUAD_LAYER, BaseXRLayer.EQUIRECT_LAYER, BaseXRLayer.PROJECTION_LAYER].includes(layerType)) {
+              console.error("");
+              return null;
+            }
+          }
+
+          this.__LAYER_TYPES = layerTypes;          
+        }
+
+        get _xrMediaBinding() { return this._makeSafe(this.__xrMediaBinding, ""); }
+        set _xrMediaBinding(xrMediaBinding) { this.__xrMediaBinding = xrMediaBinding; }
+
+        get _xrWebGlBinding() { return this._makeSafe(this.__xrWebGlBinding, ""); }
+        set _xrWebGlBinding(xrWebGlBinding) { this.__xrWebGlBinding = xrWebGlBinding; }
+
+        get _renderer() { return this._makeSafe(this.__renderer, ""); }
+        set _renderer(renderer) { this.__renderer = renderer; }
+
+        get quadLayer() {
+          if (this._BINDING_TYPE === BaseXRLayer.MEDIA_BINDING) {
+            return this._makeSafe(this.__quadMediaLayer, "");
+          } else if (this._BINDING_TYPE === BaseXRLayer.WEB_GL_BINDING) {
+            return this._makeSafe(this.__quadWebGlLayer, "");
+          }
+        }
+
+        get equirectLayer() {
+          if (this._BINDING_TYPE === BaseXRLayer.MEDIA_BINDING) {
+            return this._makeSafe(this.__equirectMediaLayer, "");
+          } else if (this._BINDING_TYPE === BaseXRLayer.WEB_GL_BINDING) {
+            return this._makeSafe(this.__equirectWebGlLayer, "");
+          }
+        }
+
+        get projectionLayer() {
+          if (this._BINDING_TYPE === BaseXRLayer.MEDIA_BINDING) {
+            console.error("");
+            return null;
+          } else if (this._BINDING_TYPE === BaseXRLayer.WEB_GL_BINDING) {
+            return this._makeSafe(this.__projectionWebGlLayer, "");
+          }
+        }
+
+        async _initializeXRBindings(session) {
+          if (this._BINDING_TYPE === BaseXRLayer.MEDIA_BINDING) {
+            this.__xrMediaBinding = new XRMediaBinding(session);
+          } else if (this._BINDING_TYPE === BaseXRLayer.WEB_GL_BINDING) {
+            const gl = this.__renderer.getContext();  
+            await gl.makeXRCompatible();
+            this.__xrWebGlBinding = new XRWebGLBinding(session, gl);
+          }
+        }
+
+        async initialize(session) {
+          await this._initializeXRBindings(session);
+        }
+
+        createQuadLayer(refSpace, { transform, layout, video, viewPixelHeight, viewPixelWidth, height, width }) {
+          const space = refSpace.getOffsetReferenceSpace(new XRRigidTransform({ x: 0.0, y: 0.0, z: 0.0, w: 1.0 }));
+          if (this._BINDING_TYPE === BaseXRLayer.MEDIA_BINDING) {
+            this._makeSafe(video, "");
+            this.__quadMediaLayer = this._xrMediaBinding.createQuadLayer(video, {
+              layout,
+              transform,
+              space,
+            });
+          } else if (this.__BINDING_TYPE === BaseXRLayer.WEB_GL_BINDING) {
+            this.__quadWebGlLayer = this._xrWebGlBinding.createQuadLayer({
+              layout,
+              transform,
+              space,
+              width,
+              height,
+              viewPixelWidth,
+              viewPixelHeight,
+            });
+          }
+        }
+
+        createEquirectLayer(refSpace, { video }) {
+          if (this._BINDING_TYPE === BaseXRLayer.MEDIA_BINDING) {
+            this._makeSafe(video, "");
+            this.__equirectMediaLayer = this._xrMediaBinding.createEquirectLayer(video, { space: refSpace });
+          } else if (this.__BINDING_TYPE === BaseXRLayer.WEB_GL_BINDING) {
+            this.__equirectWebGlLayer = this._xrWebGlBinding.createEquirectLayer({ space: refSpace });
+          }
+        }
+
+        createProjectionLayer() {
+          if (this._BINDING_TYPE === BaseXRLayer.MEDIA_BINDING) {
+            console.error("");
+            return null;
+          } else if (this.__BINDING_TYPE === BaseXRLayer.WEB_GL_BINDING) {
+            this.__projectionWebGlLayer = this._xrWebGlBinding.createProjectionLayer({});
+          }
+        }
+
+        render(frame, pose) {
+          if (this._BINDING_TYPE !== BaseXRLayer.WEB_GL_BINDING) {
+            console.error("");
+            return null;
+          }
+        }
+      }
+
+      class RaycastableBaseXRLayer extends BaseXRLayer {
+        constructor() {
+          super();
+
+          this.__mirrorLayer = null;
+          this.__worldX = null;
+          this.__worldY = null;
+          this.__localX = null;
+          this.__localY = null;
+        }
+
+        get worldX() { return this.__worldX; }
+        get worldY() { return this.__worldY; }
+        get localX() { return this.__localX; }
+        get localY() { return this.__localY; }
+        get mirrorLayer() { return this.__mirrorLayer; }
+
+        createQuadLayer(refSpace, { transform, layout, video, viewPixelHeight, viewPixelWidth, height, width, pinToCamera }) {
+          super.createQuadLayer(refSpace, { transform, layout, video, viewPixelHeight, viewPixelWidth, height, width });
+
+          const geometry = new THREE.PlaneGeometry(this.quadLayer.width * 2, this.quadLayer.height * 2);
+          const material = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide, opacity: 0 });
+          this.__mirrorLayer = new THREE.Mesh(geometry, material);
+          this.quadLayer._mirror = this.__mirrorLayer;
+
+          this.__mirrorLayer.name = "mirror";
+          this.__mirrorLayer._layer = this.quadLayer;
+          this.__mirrorLayer._pinToCamera = pinToCamera;
+          this.__mirrorLayer.position.x = this.quadLayer.transform.position.x;
+          this.__mirrorLayer.position.y = this.quadLayer.transform.position.y;
+          this.__mirrorLayer.position.z = this.quadLayer.transform.position.z;
+
+          this.quadLayer._onRaycasterDidIntersect = this._onRaycasterDidIntersect.bind(this);
+        }
+
+        _onRaycasterDidIntersect(worldX, worldY) {
+          if (!worldX || !worldY) {
+            this.__worldX = null;
+            this.__worldY = null;
+            this.__localX = null;
+            this.__localY = null;
+            return false;
+          }
+
+          this.__worldX = worldX;
+          this.__worldY = worldY;
+          this.__localX = (worldX + 1) / (2 / this.quadLayer.viewPixelWidth);
+          this.__localY = -(worldY + this.quadLayer.height) / (this.quadLayer.height * 2 / this.quadLayer.viewPixelHeight);
+          return true;
+        }
+
+        _onPress(evt) { }
+        async initialize(session) {
+          session.addEventListener("squeeze", (evt) => this._onPress(evt));
+          session.addEventListener("select", (evt) => this._onPress(evt));
+          await super.initialize(session);
+        }
+      }
+
+      class ThreeXRProjector extends BaseXRLayer {
+        constructor() {
+          super();
+          this._BINDING_TYPE = BaseXRLayer.WEB_GL_BINDING;
+          this._LAYER_TYPES = [BaseXRLayer.PROJECTION_LAYER];
+          this.__renderer = new THREE.WebGLRenderer({
             antialias: true,
             alpha: true
           });
 
-          this._xrWebGlBinding = null;
-          this._projectionWebGlLayer = null;
-          this._controllerMeshes = {};
-
-          const gl = this._renderer.getContext();
-          this._renderer.setPixelRatio(window.devicePixelRatio);
-          this._renderer.setSize(window.innerWidth, window.innerHeight, false);
-          this._renderer.outputEncoding = THREE.sRGBEncoding;
-          this._renderer.shadowMap.enabled = true;
-          this._renderer.xr.enabled = true;
-          this._renderer.autoClear = false;
+          const gl = this.__renderer.getContext();
+          this.__renderer.setPixelRatio(window.devicePixelRatio);
+          this.__renderer.setSize(window.innerWidth, window.innerHeight, false);
+          this.__renderer.outputEncoding = THREE.sRGBEncoding;
+          this.__renderer.shadowMap.enabled = true;
+          this.__renderer.xr.enabled = true;
+          this.__renderer.autoClear = false;
 
           this._scene = new THREE.Scene();
           this._scene.matrixAutoUpdate = false;
 
+          this._pinnedLayers = [];
+          this._controllerMeshes = {};
           this._framebuffer = gl.createFramebuffer();
           this._camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
           this._camera.matrixAutoUpdate = false;
@@ -188,31 +415,23 @@
           return [hemisphereLight, directionalLight];
         }
 
-        async initializeXRBindings(session) {
-          const gl = this._renderer.getContext();
-          await gl.makeXRCompatible();
-
-          this._xrMediaBinding = new XRMediaBinding(session);
-          this._xrWebGlBinding = new XRWebGLBinding(session, gl);
-          this._controlsContainer.appendChild(this._renderer.domElement);
+        async initialize(session) {
+          await super.initialize(session);
+          this._controlsContainer.appendChild(this.__renderer.domElement);
           document.body.appendChild(this._controlsContainer);
         }
 
-        async createProjectionLayer() {
-          this._projectionWebGlLayer = this._xrWebGlBinding.createProjectionLayer({});
-          return [this._projectionWebGlLayer];
+        addMirrorLayer(mirrorLayer) {
+          this._scene.add(mirrorLayer);
         }
 
-        makeRigidTransformLayerPressable(layer) {
-          const geometry = new THREE.PlaneGeometry(layer.width * 2, layer.height * 2);
-          const material = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide, opacity: 0 });
-          const mirror = new THREE.Mesh(geometry, material);
+        addPinnedMirrorLayer(pinnedMirrorLayer) {
+          this._camera.add(pinnedMirrorLayer);
+          this._pinnedLayers.push(pinnedMirrorLayer);
+        }
 
-          mirror.name = "mirror";
-          mirror.position.x = layer.transform.position.x;
-          mirror.position.y = layer.transform.position.y;
-          mirror.position.z = layer.transform.position.z * 23/22;
-          this._scene.add(mirror);
+        getController(targetRayMode, handedness) {
+          return this._controllerMeshes[`${targetRayMode}-${handedness}`];
         }
 
         useProfileControllerMeshes(session) {
@@ -225,30 +444,28 @@
                 fetchProfile(inputSource, DEFAULT_PROFILES_PATH).then(({ profile, assetPath }) => {
                   new GLTFLoader().load(assetPath,
                     function (gltf) {
-                      controllers[`${inputSource.targetRayMode}-${inputSource.handedness}`] = gltf.scene;
+                      const cachedController = controllers[`${inputSource.targetRayMode}-${inputSource.handedness}`];
+                      if (cachedController) {
+                        scene.remove(cachedController._line);
+                        scene.remove(cachedController);
+                      }
 
+                      controllers[`${inputSource.targetRayMode}-${inputSource.handedness}`] = gltf.scene;
                       const controller = gltf.scene.children[0];
+
                       const controllerCenter = new THREE.Box3().setFromObject(controller).getCenter(controller.position);
                       const lineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, -1.25, 0)]);
                       const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
                       const line = new THREE.Line(lineGeometry, lineMaterial);
                       line.position.copy(controllerCenter);
-
-                      const cursorGeometry = new THREE.CircleGeometry(0.05, 30);
-                      const cursorMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 1, side: THREE.DoubleSide });
-                      const cursor = new THREE.Mesh(cursorGeometry, cursorMaterial);
-                      cursor.scale.x = 0.25;
-                      cursor.scale.y = 0.25;
-                      cursor.scale.z = 0.25;
+                      line.matrixAutoUpdate = false;
 
                       gltf.scene.visible = true;
                       gltf.scene.matrixAutoUpdate = false;
-                      gltf.scene._cursor = cursor;
                       gltf.scene._line = line;
-                      gltf.scene.add(line);
 
+                      scene.add(gltf.scene._line);
                       scene.add(gltf.scene);
-                      scene.add(cursor);
                     },
                     function (xhr) {
                       console.log((xhr.loaded / xhr.total * 100) + "% loaded");
@@ -263,13 +480,15 @@
         }
 
         render(frame, pose) {
-          if (!pose) return;
-          this._renderer.clear();
-          const gl = this._renderer.getContext();
+          super.render(frame, pose);
+
+          this.__renderer.clear();
+          const gl = this.__renderer.getContext();
 
           for (let inputSource of frame.session.inputSources) {
-            const inputPose = frame.getPose(inputSource.gripSpace, refSpace);
-            const { targetRayMode, handedness } = inputSource;
+            const { gripSpace, targetRaySpace, targetRayMode, handedness } = inputSource;
+            const targetRayPose = frame.getPose(targetRaySpace, refSpace);
+            const inputPose = frame.getPose(gripSpace, refSpace);
 
             const controller = this._controllerMeshes[`${targetRayMode}-${handedness}`];
             if (!inputPose || !controller) continue;
@@ -278,10 +497,16 @@
             grip.fromArray(inputPose.transform.matrix);
             controller.matrix.copy(grip);
 
+            const ray = new THREE.Matrix4();
+            ray.fromArray(targetRayPose.transform.matrix);
+
+            controller._line.matrix.copy(ray);
+            controller.matrix.copy(grip);
+
             const laserLength = -2.5;
             const rayMatrix = new THREE.Matrix4();
             const rayMatrixWorld = new THREE.Matrix4();
-            rayMatrix.fromArray(inputPose.transform.matrix);
+            rayMatrix.fromArray(targetRayPose.transform.matrix);
 
             const raycaster = new THREE.Raycaster();
             const raycasterOrigin = new THREE.Vector3();
@@ -291,29 +516,20 @@
             raycasterOrigin.setFromMatrixPosition(rayMatrixWorld);
             raycaster.set(raycasterOrigin, raycasterDestination.transformDirection(rayMatrixWorld).normalize());
 
-            let intersects = raycaster.intersectObjects(this._scene.children, true);
-            let foundIntersection = false;
-
-            for (let intersect of intersects) {
+            for (let intersect of raycaster.intersectObjects(this._scene.children, true)) {
               if (intersect && intersect.object && !intersect.object.name.includes("mirror")) {
-                mediaPlayer._onRaycasterDidIntersect(null, null);
+                toolbar._onRaycasterDidIntersect(null, null);
                 continue;
               };
 
-              foundIntersection = true;
-              const shouldShowCursor = mediaPlayer._onRaycasterDidIntersect(intersect.point.x, intersect.point.y);
-
-              controller._cursor.visible = shouldShowCursor;
-              controller._cursor.position.copy(intersect.point);
-              controller._cursor.position.z += 0.1;
+              const localIntersectPoint = intersect.object.worldToLocal(intersect.point);
+              intersect.object._layer._onRaycasterDidIntersect(localIntersectPoint.x, localIntersectPoint.y);
               break;
             }
-
-            if (!foundIntersection) controller._cursor.visible = false;
           }
 
           for (let view of pose.views) {
-            const viewSubImage = this._xrWebGlBinding.getViewSubImage(this._projectionWebGlLayer, view);
+            const viewSubImage = this._xrWebGlBinding.getViewSubImage(this.projectionLayer, view);
             const viewport = viewSubImage.viewport;
 
             gl.bindFramebuffer(gl.FRAMEBUFFER, this._framebuffer);
@@ -324,13 +540,22 @@
 
             this._camera.matrix.fromArray(view.transform.matrix);
             this._camera.projectionMatrix.fromArray(view.projectionMatrix);
+
             this._scene.updateMatrixWorld(true);
+            this._pinnedLayers.forEach(mirror => {
+              const mPosition = new THREE.Vector3();
+              const mQuaternion = new THREE.Quaternion();
 
-            this._renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
-            this._renderer.setFramebuffer(this._framebuffer);
+              mirror.getWorldPosition(mPosition);
+              mirror.getWorldQuaternion(mQuaternion);
+              mirror._layer.transform = new XRRigidTransform(mPosition, mQuaternion);
+            });
 
-            this._renderer.render(this._scene, this._camera);
-            this._renderer.clearDepth();
+            this.__renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+            this.__renderer.setFramebuffer(this._framebuffer);
+
+            this.__renderer.render(this._scene, this._camera);
+            this.__renderer.clearDepth();
           }
         }
       }
@@ -379,41 +604,40 @@
         hideInverse() { this._background.material = this._backgroundMaterial; }
       }
 
-      class MediaPlayer {
-        constructor(layerType, videoSrc) {
-          this._renderer = new THREE.WebGLRenderer({
+      class Toolbar extends RaycastableBaseXRLayer {
+        constructor() {
+          super();
+          this._BINDING_TYPE = BaseXRLayer.WEB_GL_BINDING;
+          this._LAYER_TYPES = [BaseXRLayer.QUAD_LAYER];
+          this.__renderer = new THREE.WebGLRenderer({
             antialias: true,
             alpha: true
           });
 
-          this._renderer.xr.enabled = true;
-          this._renderer.setSize(1280, 105);
+          const gl = this.__renderer.getContext();
+          this.__renderer.setSize(1280, 105);
+          this.__renderer.xr.enabled = true;
 
-          this._xrMediaBinding = null;
-          this._xrWebGlBinding = null;
-
-          this._quadWebGlLayer = null;
-          this._quadMediaLayer = null;
-          this._equirectMediaLayer = null;
-
-          this._layoutType = layerType;
-          this._videoSrc = videoSrc;
-          this._video = null;
-
-          this._lastX = null;
-          this._lastY = null;
           this._timeoutId = null;
-
+          this._repositionToggle = false;
           this._showingProgressBar = false;
           this._isPlaying = false;
           this._isMuted = false;
 
+          this._video = null;
+          this._player = null;
+
+          this._framebuffer = gl.createFramebuffer();
+          this._readFramebuffer = gl.createFramebuffer();
           this._camera = new THREE.OrthographicCamera(0, 1280, 0, -105);
           this._camera.position.z = 1;
 
           this._scene = new THREE.Scene();
           this._scene.add(this._camera);
+          this._buttons = this._createButtons();
+        }
 
+        _createButtons() {
           const buttonOptions = {
             invertColor: 0x4fb5ff,
             backgroundColor: 0xffffff,
@@ -422,56 +646,24 @@
             spriteScale: 65
           };
 
-          this._backwardButton = new Button(1280 / 10, -105 / 2, "./media/textures/backward-button.png", this._scene, buttonOptions);
+          this._backwardButton = new Button(1280 / 12 * 1.25, -105 / 2, "./media/textures/backward-button.png", this._scene, buttonOptions);
+          this._playButton = new Button(1280 / 12 * 2.25, -105 / 2, "./media/textures/play-solid.png", this._scene, buttonOptions);
+          this._pauseButton = new Button(1280 / 12 * 2.25, -105 / 2, "./media/textures/pause-solid.png", this._scene, buttonOptions);
+          this._forwardButton = new Button(1280 / 12 * 3.25, -105 / 2, "./media/textures/forward-button.png", this._scene, buttonOptions);
+          this._repositionButton = new Button(1280 / 12 * 5, -105 / 2, "./media/textures/reposition-button.png", this._scene, buttonOptions);
+          this._compressButton = new Button(1280 / 12 * 6, -105 / 2, "./media/textures/compress-button.png", this._scene, buttonOptions);
+          this._expandButton = new Button(1280 / 12 * 7, -105 / 2, "./media/textures/expand-button.png", this._scene, buttonOptions);
+          this._muteButton = new Button(1280 / 12 * 8.75, -105 / 2, "./media/textures/volume-mute-button.png", this._scene, buttonOptions);
+          this._unmuteButton = new Button(1280 / 12 * 8.75, -105 / 2, "./media/textures/volume-off-button.png", this._scene, buttonOptions);
+          this._volumeDownButton = new Button(1280 / 12 * 9.75, -105 / 2, "./media/textures/volume-down-button.png", this._scene, buttonOptions);
+          this._volumeUpButton = new Button(1280 / 12 * 10.75, -105 / 2, "./media/textures/volume-up-button.png", this._scene, buttonOptions);
 
-          this._playButton = new Button(1280 / 10 * 2, -105 / 2, "./media/textures/play-solid.png", this._scene, buttonOptions);
-          this._pauseButton = new Button(1280 / 10 * 2, -105 / 2, "./media/textures/pause-solid.png", this._scene, buttonOptions);
-
-          this._forwardButton = new Button(1280 / 10 * 3, -105 / 2, "./media/textures/forward-button.png", this._scene, buttonOptions);
-
-          this._muteButton = new Button(1280 / 10 * 7, -105 / 2, "./media/textures/volume-mute-button.png", this._scene, buttonOptions);
-          this._unmuteButton = new Button(1280 / 10 * 7, -105 / 2, "./media/textures/volume-off-button.png", this._scene, buttonOptions);
-
-          this._volumeDownButton = new Button(1280 / 10 * 8, -105 / 2, "./media/textures/volume-down-button.png", this._scene, buttonOptions);
-          this._volumeUpButton = new Button(1280 / 10 * 9, -105 / 2, "./media/textures/volume-up-button.png", this._scene, buttonOptions);
-
-          this._buttons = [this._backwardButton, this._playButton, this._pauseButton, this._forwardButton, this._muteButton, this._unmuteButton, this._volumeUpButton, this._volumeDownButton];
-
-          const gl = this._renderer.getContext();
-          this._framebuffer = gl.createFramebuffer();
-          this._readFramebuffer = gl.createFramebuffer();
-        }
-
-        get video() { return this._video; }
-        get showingProgressBar() { return this._showingProgressBar; }
-        get isPlaying() { return this._isPlaying; }
-
-        _initializeVideoElement() {
-          const video = document.createElement("video");
-          video.src = this._videoSrc;
-          video.loop = true;
-          video.volume = 1;
-
-          video.addEventListener("play", () => {
-            this.showProgressBar();
-            this._isPlaying = true;
-          });
-
-          video.addEventListener("pause", () => {
-            this.showProgressBar();
-            this._isPlaying = false;
-          });
-
-          return new Promise(resolve => {
-            video.addEventListener("loadeddata", () => {
-              return resolve(video);
-            });
-          });
+          return [this._backwardButton, this._playButton, this._pauseButton, this._forwardButton, this._repositionButton, this._compressButton, this._expandButton, this._muteButton, this._unmuteButton, this._volumeUpButton, this._volumeDownButton];
         }
 
         _timeoutProgressBar() {
           if (this._timeoutId) clearTimeout(this._timeoutId);
-          this._timeoutId = setTimeout(this.hideProgressBar.bind(this), 4000);
+          this._timeoutId = setTimeout(this.hide.bind(this), 4000);
         }
 
         _determineToggleButtonVisibility() {
@@ -490,6 +682,7 @@
         }
 
         _getButtonsInBound(x, y) {
+          if (!x || !y) return [];
           return this._buttons.filter(button => {
             const isInBoundsX = x >= button.position.x - button.scale.x / 2 && x <= button.position.x + button.scale.x / 2;
             const isInBoundsY = y >= button.position.y - button.scale.y / 2 && y <= button.position.y + button.scale.y / 2;
@@ -498,110 +691,230 @@
         }
 
         _onPress(evt) {
-          this._getButtonsInBound(this._lastX, this._lastY).forEach(button => button._onPress());
+          if (!this._showingProgressBar) this.show(mediaPlayer);
+          if (this._player && this._repositionToggle) {
+            const mirror = this._player.quadLayer._mirror;
+            mirror._originalParent.attach(mirror);
+            mirror._originalParent = undefined;
+            this._repositionToggle = false;
+            return;
+          }
+
+          this._getButtonsInBound(this.__localX, this.__localY).forEach(button => button._onPress());
         }
 
-        _onRaycasterDidIntersect(worldX, worldY) {          
-          this._lastX = worldX ? (worldX + 1) / (1 * 2 / 1280) + 4 : -9999;
-          this._lastY = worldY ? (worldY - 0.08203125) / (0.08203125 * 2 / 105) - 518 : -9999;
-
+        _onRaycasterDidIntersect(worldX, worldY) {
           for (let button of this._buttons) { button.hideInverse(); }
-          if (!worldX || !worldY || !this.showingProgressBar) return false;
+          if (!this._showingProgressBar) return false;
 
-          this._getButtonsInBound(this._lastX, this._lastY).forEach(button => button.showInverse());
+          super._onRaycasterDidIntersect(worldX, worldY);
+          if (!worldX || !worldY) { return false; }
+
+          this._getButtonsInBound(this.localX, this.localY).forEach(button => button.showInverse());
           this._timeoutProgressBar();
           return true;
         }
 
-        async initializeXRBindings(session) {
-          const gl = this._renderer.getContext();
+        async initialize(session) {
+          await super.initialize(session);
+          const gl = this.__renderer.getContext();
           document.body.appendChild(gl.canvas);
 
-          await gl.makeXRCompatible();
-          this._xrMediaBinding = new XRMediaBinding(session);
-          this._xrWebGlBinding = new XRWebGLBinding(session, gl);
-          this._video = await this._initializeVideoElement();
+          this._backwardButton._onPress = () => {
+            if (this._video) this._video.currentTime = String(Math.max(0, this._video.currentTime - 10));
+          };
 
-          this._backwardButton._onPress = () => this._video.currentTime = String(Math.max(0, this._video.currentTime - 10));
-          this._forwardButton._onPress = () => this._video.currentTime = String(Math.min(this._video.duration, this._video.currentTime + 10));
-          this._volumeUpButton._onPress = () => this._video.volume = Math.min(1, this._video.volume + 0.1);
-          this._volumeDownButton._onPress = () => this._video.volume = Math.max(0, this._video.volume - 0.1);
+          this._forwardButton._onPress = () => {
+            if (this._video) this._video.currentTime = String(Math.min(this._video.duration, this._video.currentTime + 10));
+          }
+
+          this._volumeUpButton._onPress = () => {
+            if (this._video) this._video.volume = Math.min(1, this._video.volume + 0.1);
+          }
+
+          this._volumeDownButton._onPress = () => {
+            if (this._video) this._video.volume = Math.max(0, this._video.volume - 0.1);
+          }
 
           this._pauseButton._onPress = () => {
-            if (this._isPlaying) this._video.pause();
+            if (this._video && this._isPlaying) this._video.pause();
           }
+
           this._playButton._onPress = () => {
-            if (!this._isPlaying) this._video.play();
+            if (this._video && !this._isPlaying) this._video.play();
           }
+
+          this._repositionButton._onPress = () => {
+            if (this._video) this._repositionToggle = true;
+          }
+
+          this._expandButton._onPress = () => {
+            if (!this._player) return;
+            const layer = this._player.quadLayer;
+            layer.width *= 1.25;
+            layer.height *= 1.25;
+            layer._mirror.scale.x *= 1.25;
+            layer._mirror.scale.y *= 1.25;
+          }
+
+          this._compressButton._onPress = () => {
+            if (!this._player) return;
+            const layer = this._player.quadLayer;
+            layer.width /= 1.25;
+            layer.height /= 1.25;
+            layer._mirror.scale.x /= 1.25;
+            layer._mirror.scale.y /= 1.25;
+          }
+
           this._muteButton._onPress = () => {
-            if (!this._isMuted) {
+            if (this._video && !this._isMuted) {
               this._video.muted = true;
               this._isMuted = true;
             }
           }
+
           this._unmuteButton._onPress = () => {
-            if (this._isMuted) {
+            if (this._video && this._isMuted) {
               this._video.muted = false;
               this._isMuted = false;
             }
-          }          
-        }
-
-        async createQuadLayer(refSpace, { hideToolbar } = {}) {
-          this._quadMediaLayer = this._xrMediaBinding.createQuadLayer(this._video, {
-            space: refSpace.getOffsetReferenceSpace(new XRRigidTransform({ x: 0.0, y: 0.0, z: 0.0, w: 1.0 })),
-            transform: new XRRigidTransform({ x: 0.0, y: 1.3, z: -2.75, w: 1.0 }),
-            layout: this._layoutType,
-          });
-
-          if (!hideToolbar) {
-            this._quadWebGlLayer = this._xrWebGlBinding.createQuadLayer({
-              layout: "mono",
-              space: refSpace.getOffsetReferenceSpace(new XRRigidTransform({ x: 0.0, y: 0.0, z: 0.0, w: 1.0 })),
-              transform: new XRRigidTransform({ x: 0.0, y: 0.8175, z: -2.75, w: 1.0 }),
-              viewPixelHeight: 105,
-              viewPixelWidth: 1280,
-              height: 105 / 1280,
-              width: 1,
-            });
           }
-
-          return [this._quadMediaLayer, this._quadWebGlLayer];
         }
 
-        async createEquirectLayer(refSpace) {
-          this._equirectMediaLayer = this._xrMediaBinding.createEquirectLayer(this._video, { space: refSpace });
-          return [this._equirectMediaLayer];
+        async createQuadLayer(refSpace) {
+          super.createQuadLayer(refSpace, {
+            layout: "mono",
+            pinToCamera: true,
+            transform: new XRRigidTransform({ x: 0.0, y: -0.25, z: -2.75, w: 1.0 }),
+            viewPixelHeight: 105,
+            viewPixelWidth: 1280,
+            height: 105 / 1280,
+            width: 1,
+          });
         }
 
-        hideProgressBar() {
+        hide() {
           this._showingProgressBar = false;
-          this._renderer.setClearColor(0x000000, 0);
+          this.__renderer.setClearColor(0x000000, 0);
           for (let child of this._scene.children) { 
             child.visible = false;
           }
+
+          this._video = null;
         }
 
-        showProgressBar() {
+        show(player, { isPlaying } = {}) {
           this._showingProgressBar = true;
-          this._renderer.setClearColor(0x000000, 0.75);
+          this.__renderer.setClearColor(0x000000, 0.75);
           for (let child of this._scene.children) { 
             child.visible = true;
           }
 
+          this._player = player;
+          this._video = player.video;
+          this._isMuted = player.video.muted;
+          if (isPlaying !== undefined) {
+            this._isPlaying = isPlaying;
+          }
+
+          this._determineToggleButtonVisibility();
           this._timeoutProgressBar();
         }
 
-        render(frame) {
-          const gl = this._renderer.getContext();
-          const glSubImage = this._xrWebGlBinding.getSubImage(this._quadWebGlLayer, frame);
+        render(frame, pose) {
+          super.render(frame, pose);
+
+          this.__renderer.clear();
+          const gl = this.__renderer.getContext();
+
+          const glSubImage = this._xrWebGlBinding.getSubImage(this.quadLayer, frame);
           this._determineToggleButtonVisibility();
+
+          for (let inputSource of frame.session.inputSources) {
+            const { gripSpace, targetRayMode, handedness } = inputSource;
+            const inputPose = frame.getPose(gripSpace, refSpace);
+
+            const controller = threeXrProjector.getController(targetRayMode, handedness);
+            if (!inputPose || !controller) continue;
+
+            if (this._repositionToggle) {
+              const position = new THREE.Vector3();
+              const quaternion = new THREE.Quaternion();
+              const mirror = this._player.quadLayer._mirror;
+
+              if (!mirror._originalParent && this.worldX && this.worldY) {
+                mirror.quaternion.copy(toolbar.quadLayer._mirror.quaternion);
+                mirror.position.x = this.worldX;
+                mirror.position.y = this.worldY;
+                mirror.position.z = -2.75;
+                mirror._originalParent = mirror.parent;
+              }
+              
+              controller._line.attach(mirror);
+              mirror.getWorldPosition(position);
+              mirror.getWorldQuaternion(quaternion);
+              this._player.quadLayer.transform = new XRRigidTransform(position, quaternion);
+            }
+          }
 
           gl.bindFramebuffer(gl.FRAMEBUFFER, this._framebuffer);
           gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, glSubImage.colorTexture, 0);
           gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this._readFramebuffer);
 
-          this._renderer.render(this._scene, this._camera);
+          this.__renderer.render(this._scene, this._camera);
+        }
+      }
+
+      class MediaPlayer extends RaycastableBaseXRLayer {
+        constructor(layoutType, videoSrc) {
+          super();
+          this._BINDING_TYPE = BaseXRLayer.MEDIA_BINDING;
+          this._LAYER_TYPES = [BaseXRLayer.QUAD_LAYER, BaseXRLayer.PROJECTION_LAYER];
+
+          this._layoutType = layoutType;
+          this._videoSrc = videoSrc;
+          this._video = null;
+        }
+
+        get video() { return this._video; }
+        get showingProgressBar() { return this._showingProgressBar; }
+
+        _initializeVideoElement() {
+          const video = document.createElement("video");
+          video.src = this._videoSrc;
+          video.loop = true;
+          video.volume = 1;
+
+          video.addEventListener("play", () => {
+            toolbar.show(this, { isPlaying: true });
+          });
+
+          video.addEventListener("pause", () => {
+            toolbar.show(this, { isPlaying: false });
+          });
+
+          return new Promise(resolve => {
+            video.addEventListener("loadeddata", () => {
+              return resolve(video);
+            });
+          });
+        }
+
+        async initialize(session) {
+          await super.initialize(session);
+          this._video = await this._initializeVideoElement();
+        }
+
+        async createQuadLayer(refSpace) {
+          super.createQuadLayer(refSpace, {
+            video: this._video,
+            transform: new XRRigidTransform({ x: 0.0, y: 1.3, z: -2.75, w: 1.0 }),
+            layout: this._layoutType,
+          });
+        }
+
+        async createEquirectLayer(refSpace) {
+          super.createEquirectLayer(refSpace, { video: this._video });
         }
       }
 
