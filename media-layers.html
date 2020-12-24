@@ -22,21 +22,54 @@
           Demonstrates using the Media Layers API to create a high-quality video player inside of an "immersive-vr" session.
           <a class="back" href="./">Back</a>
         </p>
-        <label>Choose the media"s layout:</label>
-        <select id="layoutselect">
-          <option value="./media/video/60fps.mp4">
-            mono
-          </option>
-          <option value="./media/video/bbb-sunflower-540p2-1min.webm">
-            stereo-top-bottom
-          </option>
-        </select>
+        <div id="container" style="font-family: monospace;">
+          <br />
+          <div id="media-0">
+            <label>Choose the media's layout (0):</label>
+            <select class="layoutselect">
+              <option value="./media/video/60fps.mp4">
+                mono
+              </option>
+              <option value="./media/video/bbb-sunflower-540p2-1min.webm">
+                stereo-top-bottom
+              </option>
+            </select>
+            <button type="button" onclick="window.addMediaButton()">&plus;</button>
+          </div>
+        </div>
         <p>Trigger = Squeeze = play / pause the video</p>
       </details>
     </header>
     <main style="text-align: center;">
       <p>Click "Enter VR" to see content</p>
     </main>
+    <script>
+      window.mediaCounter = 0;
+      window.removeMediaSelector = (mediaCounter) => {
+        document.getElementById(`media-${mediaCounter}`).remove();
+      }
+
+      window.addMediaButton = () => {
+        const div = document.createElement("div");
+        const container = document.getElementById("container");
+        container.appendChild(div);
+
+        window.mediaCounter += 1;
+        div.id = `media-${window.mediaCounter}`;
+        div.innerHTML = `
+          <label>Choose the media's layout (${window.mediaCounter}):</label>
+          <select class="layoutselect">
+            <option value="./media/video/60fps.mp4">
+              mono
+            </option>
+            <option value="./media/video/bbb-sunflower-540p2-1min.webm">
+              stereo-top-bottom
+            </option>
+          </select>
+          <button type="button" onclick="window.removeMediaSelector(${window.mediaCounter})">&minus;</button>
+        `;
+      }
+    </script>
     <script type="module">
       import { XRControllerModelFactory } from "https://unpkg.com/three/examples/jsm/webxr/XRControllerModelFactory.js";
       import { XRHandModelFactory } from "https://unpkg.com/three/examples/jsm/webxr/XRHandModelFactory.js";
@@ -62,9 +95,8 @@
       let refSpace = null;
       let session = null;
 
-      let layoutSelect = null;
       let threeXrProjector = null;
-      let mediaPlayer = null;
+      let mediaPlayers = null;
       let toolbar = null;
 
       function initXR() {
@@ -88,36 +120,53 @@
       }
 
       async function initializeSession(session) {
-        layoutSelect = document.getElementById("layoutselect");
-        const { text, value } = layoutSelect.options[layoutSelect.selectedIndex];
-        
         toolbar = new Toolbar();
-        mediaPlayer = new MediaPlayer(text, value);
         threeXrProjector = new ThreeXRProjector();
         threeXrProjector.useProfileControllerMeshes(session);
         
+        mediaPlayers = await initializeMediaPlayers(session);
         await threeXrProjector.initialize(session);
-        await mediaPlayer.initialize(session);
         toolbar.initialize(session);
         startSession(session);
+      }
+
+      async function initializeMediaPlayers(session) {
+        const mediaElements = document.querySelectorAll("#container div");
+        const mediaPlayers = Array.from(mediaElements).map(async (mediaElement) => {
+          const layoutSelect = document.querySelector(`#container #${mediaElement.id} .layoutselect`);
+          const { text, value } = layoutSelect.options[layoutSelect.selectedIndex];
+
+          const mediaPlayer = new MediaPlayer(text, value);
+          await mediaPlayer.initialize(session);
+          return mediaPlayer;
+        });
+
+        return await Promise.all(mediaPlayers);
       }
 
       async function startSession(session) {
         session.requestReferenceSpace("local-floor")
           .then(async (referenceSpace) => {
             refSpace = referenceSpace;
-            await mediaPlayer.createQuadLayer(refSpace);
-            await mediaPlayer.createEquirectLayer(refSpace);
             await threeXrProjector.createProjectionLayer();
             await toolbar.createQuadLayer(refSpace);
 
-            const layers = [
-              mediaPlayer.equirectLayer,
-              mediaPlayer.quadLayer,
-              threeXrProjector.projectionLayer,
-              toolbar.quadLayer,
-            ];
+            const mediaLayers = [];
+            const origin = new XRRigidTransform({ x: 0.0, y: 1.3, z: -2.75, w: 1.0 });
+            const originPlayer = mediaPlayers[0];
 
+            mediaPlayers.reverse();
+            originPlayer.createEquirectLayer(refSpace);
+            mediaLayers.push(originPlayer.equirectLayer);
+
+            for (const mediaPlayer of mediaPlayers) {
+              if (mediaPlayer === originPlayer) {
+                await mediaPlayer.createQuadLayer(refSpace, origin);
+              } else await mediaPlayer.createQuadLayer(refSpace);
+              mediaLayers.push(mediaPlayer.quadLayer);
+            }
+
+            const layers = mediaLayers.concat([threeXrProjector.projectionLayer, toolbar.quadLayer]);
             for (let layer of layers) {
               if (layer._mirror) {
                 if (layer._mirror._pinToCamera) threeXrProjector.addPinnedMirrorLayer(layer._mirror);
@@ -127,7 +176,7 @@
 
             session.updateRenderState({ layers });
             session.requestAnimationFrame(onAnimationFrame);
-            mediaPlayer.video.play();
+            mediaPlayers.forEach(mediaPlayer => mediaPlayer.video.play());
           });
       }
 
@@ -325,7 +374,7 @@
           super.createQuadLayer(refSpace, { transform, layout, video, viewPixelHeight, viewPixelWidth, height, width });
 
           const geometry = new THREE.PlaneGeometry(this.quadLayer.width * 2, this.quadLayer.height * 2);
-          const material = new THREE.MeshBasicMaterial({ color: 0x4fb5ff, side: THREE.DoubleSide, opacity: 0.3 });
+          const material = new THREE.MeshBasicMaterial({ color: 0x4fb5ff, side: THREE.DoubleSide, opacity: 0.0 });
           this.__mirrorLayer = new THREE.Mesh(geometry, material);
           this.quadLayer._mirror = this.__mirrorLayer;
 
@@ -355,7 +404,11 @@
           return true;
         }
 
-        _onPress(evt) { }
+        _onPress(evt) {
+          if (!this.lastX || !this.lastY) return false;
+          return true;
+        }
+
         async initialize(session) {
           session.addEventListener("squeeze", (evt) => this._onPress(evt));
           session.addEventListener("select", (evt) => this._onPress(evt));
@@ -384,8 +437,10 @@
           this._scene = new THREE.Scene();
           this._scene.matrixAutoUpdate = false;
 
-          this._pinnedLayers = [];
+          this._mirrorLayers = [];
+          this._pinnedMirrorLayers = [];
           this._controllerMeshes = {};
+
           this._framebuffer = gl.createFramebuffer();
           this._camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
           this._camera.matrixAutoUpdate = false;
@@ -423,11 +478,13 @@
 
         addMirrorLayer(mirrorLayer) {
           this._scene.add(mirrorLayer);
+          this._mirrorLayers.push(mirrorLayer);
         }
 
         addPinnedMirrorLayer(pinnedMirrorLayer) {
           this._camera.add(pinnedMirrorLayer);
-          this._pinnedLayers.push(pinnedMirrorLayer);
+          this._mirrorLayers.push(pinnedMirrorLayer);
+          this._pinnedMirrorLayers.push(pinnedMirrorLayer);
         }
 
         getController(targetRayMode, handedness) {
@@ -516,19 +573,20 @@
             raycasterOrigin.setFromMatrixPosition(rayMatrixWorld);
             raycaster.set(raycasterOrigin, raycasterDestination.transformDirection(rayMatrixWorld).normalize());
 
+            for (let mirrorLayer of this._mirrorLayers) {
+              mirrorLayer._layer._onRaycasterDidIntersect(null, null, null, null);
+            }
+
             for (let intersect of raycaster.intersectObjects(this._scene.children, true)) {
-              if (intersect && intersect.object && !intersect.object.name.includes("mirror")) {
-                toolbar._onRaycasterDidIntersect(null, null, null, null);
-                continue;
-              };
+              if (intersect && intersect.object && intersect.object.name.includes("mirror")) {
+                const localPoint = intersect.point.clone();
+                const worldPoint = intersect.point.clone();
+                const localIntersectPoint = intersect.object.worldToLocal(localPoint);
+                const worldIntersectPoint = intersect.object.localToWorld(worldPoint);
 
-              const localPoint = intersect.point.clone();
-              const worldPoint = intersect.point.clone();
-              const localIntersectPoint = intersect.object.worldToLocal(localPoint);
-              const worldIntersectPoint = intersect.object.localToWorld(worldPoint);
-
-              intersect.object._layer._onRaycasterDidIntersect(localIntersectPoint.x, localIntersectPoint.y, intersect.point.x, intersect.point.y);
-              break;
+                intersect.object._layer._onRaycasterDidIntersect(localIntersectPoint.x, localIntersectPoint.y, intersect.point.x, intersect.point.y);
+                break;
+              }
             }
           }
 
@@ -546,7 +604,7 @@
             this._camera.projectionMatrix.fromArray(view.projectionMatrix);
 
             this._scene.updateMatrixWorld(true);
-            this._pinnedLayers.forEach(mirror => {
+            this._pinnedMirrorLayers.forEach(mirror => {
               const mPosition = new THREE.Vector3();
               const mQuaternion = new THREE.Quaternion();
 
@@ -695,17 +753,21 @@
         }
 
         _onPress(evt) {
-          if (!this._showingProgressBar) this.show(mediaPlayer);
           if (this._player && this._repositionToggle) {
             const mirror = this._player.quadLayer._mirror;
             mirror._originalParent.attach(mirror);
             mirror._originalParent = undefined;
             mirror.matrixAutoUpdate = true;
             this._repositionToggle = false;
-            return;
+            return true;
           }
 
-          this._getButtonsInBound(this.__lastX, this.__lastY).forEach(button => button._onPress());
+          if (super._onPress(evt)) {
+            this._getButtonsInBound(this.__lastX, this.__lastY).forEach(button => button._onPress());
+            return true;
+          }
+
+          return false;
         }
 
         _onRaycasterDidIntersect(localX, localY, worldX, worldY) {
@@ -805,6 +867,7 @@
             child.visible = false;
           }
 
+          this._player = null;
           this._video = null;
         }
 
@@ -818,9 +881,7 @@
           this._player = player;
           this._video = player.video;
           this._isMuted = player.video.muted;
-          if (isPlaying !== undefined) {
-            this._isPlaying = isPlaying;
-          }
+          this._isPlaying = isPlaying !== undefined ? isPlaying : !player.video.paused;
 
           this._determineToggleButtonVisibility();
           this._timeoutProgressBar();
@@ -897,8 +958,8 @@
         _initializeVideoElement() {
           const video = document.createElement("video");
           video.src = this._videoSrc;
+          video.muted = true;
           video.loop = true;
-          video.volume = 1;
 
           video.addEventListener("play", () => {
             toolbar.show(this, { isPlaying: true });
@@ -915,16 +976,29 @@
           });
         }
 
+        _onPress(evt) {
+          if (super._onPress(evt)) {
+            toolbar.show(this);
+            return true;
+          }
+
+          return false;
+        }
+
         async initialize(session) {
           await super.initialize(session);
           this._video = await this._initializeVideoElement();
         }
 
-        async createQuadLayer(refSpace) {
+        async createQuadLayer(refSpace, transform = null) {
+          const x = ((0.25 + Math.random()) * 2) * (Math.random() < 0.5 ? 1 : -1); 
+          const y = ((0.25 + Math.random()) * 2) * (Math.random() < 0.5 ? 1 : -1);
+
+          if (!transform) transform = new XRRigidTransform({ x, y, z: -2.75, w: 1.0 });
           super.createQuadLayer(refSpace, {
             video: this._video,
-            transform: new XRRigidTransform({ x: 0.0, y: 1.3, z: -2.75, w: 1.0 }),
             layout: this._layoutType,
+            transform,
           });
         }
 
