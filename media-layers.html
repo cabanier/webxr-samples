@@ -311,21 +311,21 @@
           this.__mirrorLayer = null;
           this.__worldX = null;
           this.__worldY = null;
-          this.__localX = null;
-          this.__localY = null;
+          this.__lastX = null;
+          this.__lastY = null;
         }
 
         get worldX() { return this.__worldX; }
         get worldY() { return this.__worldY; }
-        get localX() { return this.__localX; }
-        get localY() { return this.__localY; }
+        get lastX() { return this.__lastX; }
+        get lastY() { return this.__lastY; }
         get mirrorLayer() { return this.__mirrorLayer; }
 
         createQuadLayer(refSpace, { transform, layout, video, viewPixelHeight, viewPixelWidth, height, width, pinToCamera }) {
           super.createQuadLayer(refSpace, { transform, layout, video, viewPixelHeight, viewPixelWidth, height, width });
 
           const geometry = new THREE.PlaneGeometry(this.quadLayer.width * 2, this.quadLayer.height * 2);
-          const material = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide, opacity: 0 });
+          const material = new THREE.MeshBasicMaterial({ color: 0x4fb5ff, side: THREE.DoubleSide, opacity: 0.3 });
           this.__mirrorLayer = new THREE.Mesh(geometry, material);
           this.quadLayer._mirror = this.__mirrorLayer;
 
@@ -339,19 +339,19 @@
           this.quadLayer._onRaycasterDidIntersect = this._onRaycasterDidIntersect.bind(this);
         }
 
-        _onRaycasterDidIntersect(worldX, worldY) {
-          if (!worldX || !worldY) {
+        _onRaycasterDidIntersect(localX, localY, worldX, worldY) {
+          if (!localX || !localY || !worldX || !worldY) {
             this.__worldX = null;
             this.__worldY = null;
-            this.__localX = null;
-            this.__localY = null;
+            this.__lastX = null;
+            this.__lastY = null;
             return false;
           }
 
           this.__worldX = worldX;
           this.__worldY = worldY;
-          this.__localX = (worldX + 1) / (2 / this.quadLayer.viewPixelWidth);
-          this.__localY = -(worldY + this.quadLayer.height) / (this.quadLayer.height * 2 / this.quadLayer.viewPixelHeight);
+          this.__lastX = (localX + 1) / (2 / this.quadLayer.viewPixelWidth);
+          this.__lastY = -(localY + this.quadLayer.height) / (this.quadLayer.height * 2 / this.quadLayer.viewPixelHeight);
           return true;
         }
 
@@ -518,12 +518,16 @@
 
             for (let intersect of raycaster.intersectObjects(this._scene.children, true)) {
               if (intersect && intersect.object && !intersect.object.name.includes("mirror")) {
-                toolbar._onRaycasterDidIntersect(null, null);
+                toolbar._onRaycasterDidIntersect(null, null, null, null);
                 continue;
               };
 
-              const localIntersectPoint = intersect.object.worldToLocal(intersect.point);
-              intersect.object._layer._onRaycasterDidIntersect(localIntersectPoint.x, localIntersectPoint.y);
+              const localPoint = intersect.point.clone();
+              const worldPoint = intersect.point.clone();
+              const localIntersectPoint = intersect.object.worldToLocal(localPoint);
+              const worldIntersectPoint = intersect.object.localToWorld(worldPoint);
+
+              intersect.object._layer._onRaycasterDidIntersect(localIntersectPoint.x, localIntersectPoint.y, intersect.point.x, intersect.point.y);
               break;
             }
           }
@@ -696,21 +700,22 @@
             const mirror = this._player.quadLayer._mirror;
             mirror._originalParent.attach(mirror);
             mirror._originalParent = undefined;
+            mirror.matrixAutoUpdate = true;
             this._repositionToggle = false;
             return;
           }
 
-          this._getButtonsInBound(this.__localX, this.__localY).forEach(button => button._onPress());
+          this._getButtonsInBound(this.__lastX, this.__lastY).forEach(button => button._onPress());
         }
 
-        _onRaycasterDidIntersect(worldX, worldY) {
+        _onRaycasterDidIntersect(localX, localY, worldX, worldY) {
           for (let button of this._buttons) { button.hideInverse(); }
           if (!this._showingProgressBar) return false;
 
-          super._onRaycasterDidIntersect(worldX, worldY);
-          if (!worldX || !worldY) { return false; }
+          super._onRaycasterDidIntersect(localX, localY, worldX, worldY);
+          if (!localX || !localY || !worldX || !worldY) { return false; }
 
-          this._getButtonsInBound(this.localX, this.localY).forEach(button => button.showInverse());
+          this._getButtonsInBound(this.lastX, this.lastY).forEach(button => button.showInverse());
           this._timeoutProgressBar();
           return true;
         }
@@ -843,14 +848,24 @@
               const mirror = this._player.quadLayer._mirror;
 
               if (!mirror._originalParent && this.worldX && this.worldY) {
-                mirror.quaternion.copy(toolbar.quadLayer._mirror.quaternion);
-                mirror.position.x = this.worldX;
-                mirror.position.y = this.worldY;
-                mirror.position.z = -2.75;
+                let mirrorWorldScale = new THREE.Vector3();
+                mirror.getWorldScale(mirrorWorldScale);
+                mirror.matrixAutoUpdate = false;
+
+                mirrorWorldScale = mirror.scale;
+
+                mirror.matrix.copy(this.quadLayer._mirror.matrixWorld);
+                mirror.matrix.elements[0] = mirrorWorldScale.x;
+                mirror.matrix.elements[5] = mirrorWorldScale.y;
+                mirror.matrix.elements[10] = mirrorWorldScale.z;
+
+                mirror.scale.x = mirror._layer.width;
+                mirror.scale.y = mirror._layer.width;
+
                 mirror._originalParent = mirror.parent;
+                controller._line.attach(mirror);
               }
-              
-              controller._line.attach(mirror);
+
               mirror.getWorldPosition(position);
               mirror.getWorldQuaternion(quaternion);
               this._player.quadLayer.transform = new XRRigidTransform(position, quaternion);
