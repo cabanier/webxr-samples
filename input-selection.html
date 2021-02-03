@@ -144,7 +144,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
       function onRequestSession() {
         return navigator.xr.requestSession('immersive-vr', {
-            requiredFeatures: ['local-floor']
+            requiredFeatures: ['local-floor', 'high-fixed-foveation-level']
         }).then((session) => {
           xrButton.setSession(session);
           session.isImmersive = true;
@@ -212,7 +212,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
       function onSelectEnd(ev) {
         let i = (ev.inputSource.handedness == "left") ? 0 : 1;
-        let currently_selected_box = currently_selected_boxes[i];  
+        let currently_selected_box = currently_selected_boxes[i];
         console.log("selectend " + currently_selected_box);
         if (currently_selected_box != null) {
           if (currently_selected_box.selected) {
@@ -228,7 +228,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
       function onSelect(ev) {
         let i = (ev.inputSource.handedness == "left") ? 0 : 1;
-        let currently_selected_box = currently_selected_boxes[i];  
+        let currently_selected_box = currently_selected_boxes[i];
         console.log("select " + currently_selected_box);
         if (currently_selected_box != null) {
           // Change the box color to something random.
@@ -266,7 +266,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
       function onSqueezeEnd(ev) {
         let i = (ev.inputSource.handedness == "left") ? 0 : 1;
-        let currently_grabbed_box = currently_grabbed_boxes[i];  
+        let currently_grabbed_box = currently_grabbed_boxes[i];
         console.log("squeezeend " + currently_grabbed_box);
         if (currently_grabbed_box != null && currently_grabbed_box.grabbed) {
           // the scale of 'grabbed' box is 0.1. Restore the original scale.
@@ -278,7 +278,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
       function onSqueeze(ev) {
         let i = (ev.inputSource.handedness == "left") ? 0 : 1;
-        let currently_grabbed_box = currently_grabbed_boxes[i];  
+        let currently_grabbed_box = currently_grabbed_boxes[i];
         console.log("squeeze " + currently_grabbed_box);
         if (currently_grabbed_box != null && currently_grabbed_box.grabbed) {
           // Change the box color to something random, so we can see that 'squeeze' was invoked.
