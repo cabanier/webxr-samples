@@ -191,6 +191,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             continue;
           }
 
+          if(inputSource.gamepad.buttons[4].pressed) {
+            inputSource.gamepad.vibrationActuator.pulse(1, inputSource.handedness === "right"? 5000 : 1000);
+          }
+
           if (inputSource.targetRayMode == 'tracked-pointer') {
             scene.inputRenderer.addLaserPointer(targetRayPose.transform);
           }
