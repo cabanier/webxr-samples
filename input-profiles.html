@@ -125,7 +125,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
       function onRequestSession() {
         return navigator.xr.requestSession('immersive-vr', {
-            requiredFeatures: ['local-floor']
+            requiredFeatures: ['local-floor'],
+            optionalFeatures: ['hand-tracking']
         }).then((session) => {
           xrButton.setSession(session);
           session.isImmersive = true;
@@ -191,7 +192,21 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             continue;
           }
 
-          if(inputSource.gamepad.buttons[4].pressed) {
+          if(targetRayPose.linearVelocity) {
+            let v = targetRayPose.linearVelocity;
+            console.log(inputSource.handedness + " linear  x: " + v.x + ",y: " + v.y + ",z: " + v.z);
+          } else {
+            console.log(inputSource.handedness + " linear unknown");
+          }
+
+          if(targetRayPose.angularVelocity) {
+            let v = targetRayPose.angularVelocity;
+            console.log(inputSource.handedness + " angular x: " + v.x + ",y: " + v.y + ",z: " + v.z);
+          } else {
+            console.log(inputSource.handedness + " angular unknown");
+          }
+
+          if(inputSource.gamepad.buttons[4] && inputSource.gamepad.buttons[4].pressed) {
             inputSource.gamepad.vibrationActuator.pulse(1, inputSource.handedness === "right"? 5000 : 1000);
           }
 
@@ -230,6 +245,19 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          xrImmersiveRefSpace :
                          inlineViewerHelper.referenceSpace;
         let pose = frame.getViewerPose(refSpace);
+        if(pose.linearVelocity) {
+          let v = pose.linearVelocity;
+          console.log("viewer linear  x: " + v.x + ",y: " + v.y + ",z: " + v.z);
+        } else {
+          console.log("viewer linear unknown");
+        }
+
+        if(pose.angularVelocity) {
+          let v = pose.angularVelocity;
+          console.log("viewer angular x: " + v.x + ",y: " + v.y + ",z: " + v.z);
+        } else {
+          console.log("viewer angular unknown");
+        }
 
         scene.startFrame();
 
