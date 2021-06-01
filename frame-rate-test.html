@@ -174,7 +174,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         if((cnt++ >= 5*currentframerate) && rates) {
           cnt = 0;
           currentframerate = rates[offset];
-          session.frameRate = currentframerate;
+          session.targetFrameRate = currentframerate;
           offset++;
           if (offset >= rates.length)
             offset = 0;
