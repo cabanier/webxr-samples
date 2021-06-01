@@ -150,6 +150,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       // the session.
       function onEndSession(session) {
         session.end();
+        session.targetFrameRate = 72;
       }
 
       // Called either when the user has explicitly ended the session (like in
@@ -158,6 +159,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       // discarded.
       function onSessionEnded(event) {
         xrButton.setSession(null);
+        event.session.targetFrameRate = 72;
 
         // In this simple case discard the WebGL context too, since we're not
         // rendering anything else to the screen with it.
