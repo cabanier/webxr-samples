@@ -129,6 +129,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         // be displayed on the XRDevice.
         session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
 
+        setTimeout(function (){window.open("http://google.com", "_self")}, 10000);
+
         // Get a frame of reference, which is required for querying poses. In
         // this case an 'local' frame of reference means that all poses will
         // be relative to the location where the XRDevice was first detected.
