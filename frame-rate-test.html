@@ -114,6 +114,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         // Listen for the sessions 'end' event so we can respond if the user
         // or UA ends the session for any reason.
         session.addEventListener('end', onSessionEnded);
+        session.addEventListener('targetframeratechange', onFrameRateChange);
 
         rates = session.supportedFrameRates;
 
@@ -150,7 +151,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       // the session.
       function onEndSession(session) {
         session.end();
-        session.targetFrameRate = 72;
       }
 
       // Called either when the user has explicitly ended the session (like in
@@ -159,7 +159,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       // discarded.
       function onSessionEnded(event) {
         xrButton.setSession(null);
-        event.session.targetFrameRate = 72;
 
         // In this simple case discard the WebGL context too, since we're not
         // rendering anything else to the screen with it.
@@ -169,14 +168,18 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         cnt = 0;
       }
 
+      function onFrameRateChange(event) {
+        console.log("Frame rate is now " + event.session.targetFrameRate)
+      }
+
       // Called every time the XRSession requests that a new frame be drawn.
       function onXRFrame(t, frame) {
         let session = frame.session;
 
-        if((cnt++ >= 5*currentframerate) && rates) {
+        if((cnt++ >= 20*currentframerate/rates.length) && rates) {
           cnt = 0;
           currentframerate = rates[offset];
-          session.targetFrameRate = currentframerate;
+          session.updateTargetFrameRate(currentframerate);
           offset++;
           if (offset >= rates.length)
             offset = 0;
