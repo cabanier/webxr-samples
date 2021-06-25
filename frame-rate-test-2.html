@@ -139,11 +139,13 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         // Get a frame of reference, which is required for querying poses. In
         // this case an 'local' frame of reference means that all poses will
         // be relative to the location where the XRDevice was first detected.
-        session.requestReferenceSpace('local').then((refSpace) => {
-          xrRefSpace = refSpace;
+        session.updateTargetFrameRate(rates[0]).then(() => {
+          session.requestReferenceSpace('local').then((refSpace) => {
+            xrRefSpace = refSpace;
 
-          // Inform the session that we're ready to begin drawing.
-          session.requestAnimationFrame(onXRFrame);
+            // Inform the session that we're ready to begin drawing.
+            session.requestAnimationFrame(onXRFrame);
+          });
         });
       }
 
