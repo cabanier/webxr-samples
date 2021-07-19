@@ -114,7 +114,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         // Listen for the sessions 'end' event so we can respond if the user
         // or UA ends the session for any reason.
         session.addEventListener('end', onSessionEnded);
-        session.addEventListener('targetframeratechange', onFrameRateChange);
+        session.addEventListener('frameratechange', onFrameRateChange);
 
         rates = session.supportedFrameRates;
 
@@ -165,11 +165,11 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         renderer = null;
         rates = null;
         offset = 1;
-        cnt = ;
+        cnt = 0;
       }
 
       function onFrameRateChange(event) {
-        console.log("Frame rate is now " + event.session.targetFrameRate)
+        console.log("Frame rate is now " + event.session.frameRate)
       }
 
       // Called every time the XRSession requests that a new frame be drawn.
