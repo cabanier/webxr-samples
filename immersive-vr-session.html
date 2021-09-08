@@ -168,6 +168,20 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           else
             session.renderState.baseLayer.fixedFoveation += 0.25;
           cnt = 0;
+
+          session.updateTargetFrameRate(60)
+            .then(() => {
+             if (session.frameRate === 60) {
+               console.log("updated framerate is right");
+             } else {
+               console.log("updated framerate is wrong");
+             }
+               session.end();
+             })
+            .catch((err) => {
+              console.log("updating framerate failed");
+              session.end();
+            });
         }
 
         // Per-frame scene setup. Nothing WebXR specific here.
