@@ -180,8 +180,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 let p5 = session.updateTargetFrameRate(60);
                 let p6 = session.updateTargetFrameRate(72);
                 let p7 = session.updateTargetFrameRate(72);
-                Promise.all([p1, p2, p3, p4, p5, p6, p7]).then(() => {
-                  if (session.frameRate === 72) {
+                Promise.all([session, p1, p2, p3, p4, p5, p6, p7]).then(values => {
+                  if (values[0].frameRate === 72) {
                     console.log("concurrent setting of framerate is right");
                   } else {
                     console.log("concurrent setting of framerate is wrong");
