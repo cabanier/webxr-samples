@@ -208,6 +208,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
       // Called every time a XRSession requests that a new frame be drawn.
       function onXRFrame(t, frame) {
+        console.log(t + " " + frame.predictedDisplayTime);
         let session = frame.session;
         // Ensure that we're using the right frame of reference for the session.
         let refSpace = session.isImmersive ?
