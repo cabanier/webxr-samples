@@ -160,6 +160,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       let cnt = 0;
       // Called every time the XRSession requests that a new frame be drawn.
       function onXRFrame(t, frame) {
+        console.log(t + " " + frame.predictedDisplayTime);
         let session = frame.session;
         cnt++;
         if (cnt == 90) {
@@ -168,34 +169,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           else
             session.renderState.baseLayer.fixedFoveation += 0.25;
           cnt = 0;
-
-          session.updateTargetFrameRate(60)
-            .then(() => {
-             if (session.frameRate === 60) {
-               console.log("updated framerate is right");
-                let p1 = session.updateTargetFrameRate(60);
-                let p2 = session.updateTargetFrameRate(60);
-                let p3 = session.updateTargetFrameRate(90);
-                let p4 = session.updateTargetFrameRate(90);
-                let p5 = session.updateTargetFrameRate(60);
-                let p6 = session.updateTargetFrameRate(72);
-                let p7 = session.updateTargetFrameRate(72);
-                Promise.all([p1, p2, p3, p4, p5, p6, p7]).then(values => {
-                  if (session.frameRate === 72) {
-                    console.log("concurrent setting of framerate is right");
-                  } else {
-                    console.log("concurrent setting of framerate is wrong");
-                  }
-                  session.end();
-                });               
-             } else {
-               console.log("updated framerate is wrong");
-             }
-             })
-            .catch((err) => {
-              console.log("updating framerate failed");
-              session.end();
-            });
         }
 
         // Per-frame scene setup. Nothing WebXR specific here.
