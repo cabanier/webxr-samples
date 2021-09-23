@@ -109,6 +109,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         // Listen for the sessions 'end' event so we can respond if the user
         // or UA ends the session for any reason.
         session.addEventListener('end', onSessionEnded);
+        session.addEventListener('visibilitychange', onVisibilityChange);
 
         // Create a WebGL context to render with, initialized to be compatible
         // with the XRDisplay we're presenting to.
@@ -143,6 +144,13 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       // the session.
       function onEndSession(session) {
         session.end();
+      }
+      
+      function onVisibilityChange(event) {
+        console.log("Visibility change for "
+          + (event.session.isImmersive? "immersive" : "non-immersive")
+          + " session: "
+          + event.session.visibilityState);
       }
 
       // Called either when the user has explicitly ended the session (like in
