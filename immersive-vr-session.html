@@ -168,7 +168,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       let cnt = 0;
       // Called every time the XRSession requests that a new frame be drawn.
       function onXRFrame(t, frame) {
-        console.log(t + " " + frame.predictedDisplayTime);
         let session = frame.session;
         cnt++;
         if (cnt == 90) {
