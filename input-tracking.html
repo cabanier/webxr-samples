@@ -206,6 +206,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               // position of the controller.
               scene.inputRenderer.addController(gripPose.transform.matrix, inputSource.handedness);
             }
+            console.log("linear velocity: " + gripPose.linearVelocity.x + " " + gripPose.linearVelocity.y + " " + gripPose.linearVelocity.z);
+            console.log("angular velocity: " + gripPose.angularVelocity.x + " " + gripPose.angularVelocity.y + " " + gripPose.angularVelocity.z);
           }
           
         }
