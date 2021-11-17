@@ -92,7 +92,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         if (navigator.xr) {
           // Checks to ensure that 'immersive-ar' mode is available, and only
           // enables the button if so.
-          navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+          navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
             xrButton.enabled = supported;
           });
 
@@ -105,7 +105,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         // environment will be visible either via video passthrough or a
         // transparent display. This may be presented either in a headset or
         // fullscreen on a mobile device.
-        return navigator.xr.requestSession('immersive-ar')
+        return navigator.xr.requestSession('immersive-vr')
             .then((session) => {
               xrButton.setSession(session);
               session.isImmersive = true;
