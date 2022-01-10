@@ -199,7 +199,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           // If we do have a valid pose, bind the WebGL layer's framebuffer,
           // which is where any content to be displayed on the XRDevice must be
           // rendered.
-          gl.disable(36281);
+          gl.disable(gl.POLYGON_OFFSET_FILL);
           gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
 
           // Clear the framebuffer
