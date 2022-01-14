@@ -117,6 +117,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         session.addEventListener('frameratechange', onFrameRateChange);
 
         rates = session.supportedFrameRates;
+        session.updateTargetFrameRate(rates[120]);
+        session.updateTargetFrameRate(rates[90]);
         session.updateTargetFrameRate(rates[1]);
         session.updateTargetFrameRate(rates[0]);
 
