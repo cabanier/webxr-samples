@@ -183,7 +183,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
           // Statically render the cursor 2 meters down the ray since we're
           // not calculating any intersections in this sample.
-          let targetRay = new Ray(targetRayPose.transform);
+          let targetRay = new Ray(targetRayPose.transform.matrix);
           let cursorDistance = 2.0;
           let cursorPos = vec3.fromValues(
               targetRay.origin.x,
